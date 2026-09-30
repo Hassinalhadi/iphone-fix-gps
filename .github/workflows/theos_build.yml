@@ -6,47 +6,36 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-package:
+  build:
     runs-on: macos-latest
 
     steps:
-      - name: 1. جلب ملفات المشروع
+      # 1. جلب ملفات مشروعك (Makefile, control, Tweak.x)
+      - name: Checkout Repository
         uses: actions/checkout@v4
+        with:
+          submodules: true
 
-      - name: 2. تثبيت أدوات الحزم وتوقيع الكود (ldid & dpkg)
-        run: |
-          brew update
-          brew install ldid dpkg
+      # 2. تثبيت Theos والـ iOS SDKs تلقائياً وبشكل مضمون
+      - name: Setup Theos Environment
+        uses: Randomblock1/theos-action@v1
 
-      - name: 3. تثبيت بيئة Theos والـ iOS SDKs
+      # 3. بناء وتجميع الأداة
+      - name: Compile & Package Tweak
         run: |
-          # 1. استنساخ Theos
-          git clone --recursive https://github.com/theos/theos.git $HOME/theos
-          
-          # 2. جلب الـ SDKs إلى مجلد مؤقت ثم نسخها لمجلد Theos
-          git clone --depth 1 https://github.com/theos/sdks.git /tmp/theos-sdks
-          cp -r /tmp/theos-sdks/*.sdk $HOME/theos/sdks/
-          rm -rf /tmp/theos-sdks
-          
-          # 3. تعيين المتغير في بيئة GitHub
-          echo "THEOS=$HOME/theos" >> $GITHUB_ENV
-
-      - name: 4. تجميع وبناء الأداة (Compile & Package)
-        run: |
-          export THEOS=$HOME/theos
-          
-          # تنظيف وبناء الحزمة
           make clean
           make package FINALPACKAGE=1
 
-      - name: 5. رفع حزمة التثبيت (.deb)
+      # 4. رفع حزمة .deb الناتجة
+      - name: Upload .deb Package
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: CleanRider-DEB
           path: packages/*.deb
 
-      - name: 6. رفع ملف المكتبة المجمعة (.dylib)
+      # 5. رفع ملف المكتبة .dylib الناتجة
+      - name: Upload .dylib File
         if: always()
         uses: actions/upload-artifact@v4
         with:
