@@ -17,7 +17,7 @@ static CLLocationCoordinate2D getSavedCoordinate() {
     double lat = [[NSUserDefaults standardUserDefaults] doubleForKey:kFakeLatitudeKey];
     double lon = [[NSUserDefaults standardUserDefaults] doubleForKey:kFakeLongitudeKey];
     if (lat == 0.0 && lon == 0.0) {
-        // إحداثيات افتراضية إذا لم يتم تحديد موقع مسبقاً (مثلاً: الرياض)
+        // إحداثيات افتراضية في حال لم يتم التحديد مسبقاً (الرياض)
         return CLLocationCoordinate2DMake(24.7136, 46.6753);
     }
     return CLLocationCoordinate2DMake(lat, lon);
@@ -36,6 +36,35 @@ static CLLocation *createSpoofedLocation() {
                                         timestamp:[NSDate date]];
 }
 
+// دالة جلب النافذة الفعالة (KeyWindow) متوافقة مع iOS 13 وحتى أحدث إصدار
+static UIWindow *getKeyWindow() {
+    UIWindow *keyWindow = nil;
+    if (@available(iOS 13.0, *)) {
+        for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+            if (scene.activationState == UISceneActivationStateForegroundActive && [scene isKindOfClass:[UIWindowScene class]]) {
+                UIWindowScene *windowScene = (UIWindowScene *)scene;
+                for (UIWindow *w in windowScene.windows) {
+                    if (w.isKeyWindow) {
+                        keyWindow = w;
+                        break;
+                    }
+                }
+            }
+            if (keyWindow) break;
+        }
+    }
+    if (!keyWindow) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+        keyWindow = [UIApplication sharedApplication].keyWindow;
+        if (!keyWindow && [UIApplication sharedApplication].windows.count > 0) {
+            keyWindow = [UIApplication sharedApplication].windows.firstObject;
+        }
+#pragma clang diagnostic pop
+    }
+    return keyWindow;
+}
+
 // MARK: - واجهة الخريطة التفاعلية (MKMapView UI)
 
 @interface HSRiderMapViewController : UIViewController <MKMapViewDelegate>
@@ -51,42 +80,41 @@ static CLLocation *createSpoofedLocation() {
     [super viewDidLoad];
     self.view.backgroundColor = [UIColor systemBackgroundColor];
 
-    // 1. الخريطة
+    // 1. إعداد الخريطة
     self.mapView = [[MKMapView alloc] initWithFrame:self.view.bounds];
     self.mapView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     self.mapView.delegate = self;
     [self.view addSubview:self.mapView];
 
-    // تحديد الموقع الحالي وضبط الكاميرا
     CLLocationCoordinate2D savedCoord = getSavedCoordinate();
     MKCoordinateRegion region = MKCoordinateRegionMakeWithDistance(savedCoord, 1000, 1000);
     [self.mapView setRegion:region animated:NO];
 
-    // إضافة الدبوس
+    // الدبوس التفاعلي
     self.pinAnnotation = [[MKPointAnnotation alloc] init];
     self.pinAnnotation.coordinate = savedCoord;
-    self.pinAnnotation.title = @"الموقع الوهمي المحدد";
+    self.pinAnnotation.title = @"الموقع الوهمي";
     [self.mapView addAnnotation:self.pinAnnotation];
 
-    // إيماءة الضغط المطول لتغيير مكان الدبوس
+    // الضغط المطول لتحديد موقع جديد
     UILongPressGestureRecognizer *longPress = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(handleLongPress:)];
     longPress.minimumPressDuration = 0.4;
     [self.mapView addGestureRecognizer:longPress];
 
-    // 2. الشريط العلوي (Header Bar)
+    // 2. الشريط العلوي
     UIView *topBar = [[UIView alloc] initWithFrame:CGRectMake(20, 50, self.view.bounds.size.width - 40, 60)];
     topBar.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.75];
     topBar.layer.cornerRadius = 14;
     topBar.clipsToBounds = YES;
     [self.view addSubview:topBar];
 
-    // سويتش التفعيل
+    // مفتاح التفعيل / التعطيل
     self.enableSwitch = [[UISwitch alloc] initWithFrame:CGRectMake(15, 15, 51, 31)];
     self.enableSwitch.on = isFakeGPSEnabled();
     [self.enableSwitch addTarget:self action:@selector(toggleEnabled:) forControlEvents:UIControlEventValueChanged];
     [topBar addSubview:self.enableSwitch];
 
-    UILabel *switchLabel = [[UILabel alloc] initWithFrame:CGRectMake(75, 18, 120, 24)];
+    UILabel *switchLabel = [[UILabel alloc] initWithFrame:CGRectMake(75, 18, 130, 24)];
     switchLabel.text = @"تفعيل التزييف";
     switchLabel.textColor = [UIColor whiteColor];
     switchLabel.font = [UIFont boldSystemFontOfSize:14];
@@ -101,7 +129,7 @@ static CLLocation *createSpoofedLocation() {
     [closeBtn addTarget:self action:@selector(dismissSelf) forControlEvents:UIControlEventTouchUpInside];
     [topBar addSubview:closeBtn];
 
-    // 3. لوحة الإحداثيات والزر السفلي
+    // 3. الشريط السفلي مع زر الحفظ
     UIView *bottomBar = [[UIView alloc] initWithFrame:CGRectMake(20, self.view.bounds.size.height - 140, self.view.bounds.size.width - 40, 100)];
     bottomBar.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.8];
     bottomBar.layer.cornerRadius = 16;
@@ -183,7 +211,7 @@ static CLLocation *createSpoofedLocation() {
 
 @end
 
-// MARK: - الزر العائم (Floating Button) لإظهار الخريطة في التطبيق
+// MARK: - الزر العائم (Floating Button)
 
 @interface HSRiderFloatingButton : UIButton
 @end
@@ -216,10 +244,13 @@ static CLLocation *createSpoofedLocation() {
 }
 
 - (void)openMap {
-    UIViewController *topVC = [UIApplication sharedApplication].keyWindow.rootViewController;
+    UIWindow *window = getKeyWindow();
+    UIViewController *topVC = window.rootViewController;
     while (topVC.presentedViewController) {
         topVC = topVC.presentedViewController;
     }
+    if (!topVC) return;
+
     HSRiderMapViewController *mapVC = [[HSRiderMapViewController alloc] init];
     mapVC.modalPresentationStyle = UIModalPresentationFullScreen;
     [topVC presentViewController:mapVC animated:YES completion:nil];
@@ -245,7 +276,7 @@ static void hookDelegateClass(Class delClass) {
         [swizzledDelegateClasses addObject:className];
     }
 
-    // 1. اعتراض locationManager:didUpdateLocations: (الحديثة)
+    // اعتراض locationManager:didUpdateLocations:
     SEL newLocSel = @selector(locationManager:didUpdateLocations:);
     Method newLocMethod = class_getInstanceMethod(delClass, newLocSel);
     if (newLocMethod) {
@@ -261,7 +292,7 @@ static void hookDelegateClass(Class delClass) {
         class_replaceMethod(delClass, newLocSel, swizzledImp, method_getTypeEncoding(newLocMethod));
     }
 
-    // 2. اعتراض locationManager:didUpdateToLocation:fromLocation: (القديمة)
+    // اعتراض locationManager:didUpdateToLocation:fromLocation: (التوافق القديم)
     SEL oldLocSel = @selector(locationManager:didUpdateToLocation:fromLocation:);
     Method oldLocMethod = class_getInstanceMethod(delClass, oldLocSel);
     if (oldLocMethod) {
@@ -279,7 +310,6 @@ static void hookDelegateClass(Class delClass) {
 
 %hook CLLocationManager
 
-// اعتراض قراءة خاصية الموقع المباشرة
 - (CLLocation *)location {
     CLLocation *spoofed = createSpoofedLocation();
     if (spoofed) {
@@ -288,7 +318,6 @@ static void hookDelegateClass(Class delClass) {
     return %orig;
 }
 
-// اعتراض تعيين الـ Delegate لتسجيل الـ Hook عليه فوراً
 - (void)setDelegate:(id<CLLocationManagerDelegate>)delegate {
     if (delegate) {
         hookDelegateClass([delegate class]);
@@ -298,7 +327,6 @@ static void hookDelegateClass(Class delClass) {
 
 %end
 
-// إضافة الزر العائم فوق واجهة التطبيق
 %hook UIWindow
 
 - (void)makeKeyAndVisible {
