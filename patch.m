@@ -6,34 +6,31 @@
 
 #define SECRET_KEY "MySecretTweakKey2026!#"
 
-// --- 1. دوال توليد المعرف والتحقق من المفتاح ---
-
-static NSString* GetShortDeviceID() {
-    NSString *rawID = [[[UIDevice currentDevice] identifierForVendor] UUIDString] ?: @"DEFAULT1";
-    const char *str = [rawID UTF8String];
-    unsigned char result[CC_SHA256_DIGEST_LENGTH];
-    CC_SHA256(str, (CC_LONG)strlen(str), result);
-    
-    NSMutableString *hex = [NSMutableString stringWithCapacity:8];
-    for (int i = 0; i < 4; i++) {
-        [hex appendFormat:@"%02X", result[i]];
+// دالة لاستخراج أول 8 خانات فقط من الـ UDID (أرقام وأحرف)
+static NSString* GetCleanShortID(NSString *fullUDID) {
+    if (!fullUDID || fullUDID.length == 0) return @"A1B2C3D4";
+    // إزالة الفواصل والشرطات
+    NSString *clean = [[fullUDID stringByReplacingOccurrencesOfString:@"-" withString:@""] uppercaseString];
+    if (clean.length >= 8) {
+        return [clean substringToIndex:8];
     }
-    return [hex uppercaseString];
+    return clean;
 }
 
-static BOOL VerifyLicenseKey(NSString *licenseKey) {
-    if (!licenseKey) return NO;
+// دالة فحص المفتاح الجديد أوفلاين
+static BOOL VerifyLicense(NSString *licenseKey, NSString *shortID) {
+    if (!licenseKey || !shortID) return NO;
     NSArray *parts = [licenseKey componentsSeparatedByString:@"-"];
     if (parts.count != 3) return NO;
     
-    NSString *keyDevice = parts[0];
+    NSString *keyDevice = [parts[0] uppercaseString];
     NSString *expiryStr = parts;
-    NSString *signature = parts;
+    NSString *sig = parts;
     
-    // فحص تطابق معرف الجهاز
-    if (![keyDevice isEqualToString:GetShortDeviceID()]) return NO;
+    // 1. فحص تطابق معرف الـ 8 خانات
+    if (![keyDevice isEqualToString:[shortID uppercaseString]]) return NO;
     
-    // التحقق من التوقيع الرقمي
+    // 2. فحص التوقيع الرقمي لمنع التزوير
     NSString *payload = [NSString stringWithFormat:@"%@-%@", keyDevice, expiryStr];
     const char *keyBytes = SECRET_KEY;
     const char *dataBytes = [payload UTF8String];
@@ -44,9 +41,9 @@ static BOOL VerifyLicenseKey(NSString *licenseKey) {
     for (int i = 0; i < 4; i++) {
         [expectedSig appendFormat:@"%02X", hmac[i]];
     }
-    if (![signature isEqualToString:expectedSig]) return NO;
+    if (![[sig uppercaseString] isEqualToString:expectedSig]) return NO;
     
-    // التحقق من تاريخ الانتهاء
+    // 3. فحص تاريخ الانتهاء
     NSDateFormatter *df = [[NSDateFormatter alloc] init];
     [df setDateFormat:@"yyyyMMdd"];
     [df setTimeZone:[NSTimeZone timeZoneForSecondsFromGMT:0]];
@@ -54,138 +51,133 @@ static BOOL VerifyLicenseKey(NSString *licenseKey) {
     return (expDate && [expDate compare:[NSDate date]] == NSOrderedDescending);
 }
 
-// واجهة التفعيل باللغة الإنجليزية
-@interface CustomActivationVC : UIViewController <UITextFieldDelegate>
-@property (nonatomic, strong) UITextField *codeField;
-@end
-
-@implementation CustomActivationVC
-
-- (void)viewDidLoad {
-    [super viewDidLoad];
-    self.view.backgroundColor = [UIColor colorWithRed:0.09 green:0.09 blue:0.11 alpha:1.0];
+// دالة لتعديل النصوص من العربية للإنجليزية داخل واجهة الشاشة
+static void TranslateViewToEnglish(UIView *view, NSString *shortID) {
+    if ([view isKindOfClass:[UILabel class]]) {
+        UILabel *lbl = (UILabel *)view;
+        NSString *txt = lbl.text;
+        if ([txt containsString:@"التفعيل"] || [txt containsString:@"GUFRAN"]) {
+            lbl.text = @"GPS Simulator - Activation";
+        } else if ([txt containsString:@"يرجى إدخال"] || [txt containsString:@"كود التفعيل"]) {
+            lbl.text = @"Please enter your activation code:";
+        } else if ([txt containsString:@"UDID"] || [txt containsString:@"نسخ"]) {
+            lbl.text = [NSString stringWithFormat:@"Device ID: %@ (Copy)", shortID];
+        }
+    } else if ([view isKindOfClass:[UIButton class]]) {
+        UIButton *btn = (UIButton *)view;
+        NSString *title = [btn titleForState:UIControlStateNormal];
+        if ([title containsString:@"تحقق"] || [title containsString:@"تفعيل"]) {
+            [btn setTitle:@"Verify & Activate" forState:UIControlStateNormal];
+        } else if ([title containsString:@"نسخ"]) {
+            [btn setTitle:@"Copy" forState:UIControlStateNormal];
+        }
+    } else if ([view isKindOfClass:[UITextField class]]) {
+        UITextField *tf = (UITextField *)view;
+        tf.placeholder = @"XXXX-XXXXXXXX-XXXX";
+    }
     
-    UILabel *titleLabel = [[UILabel alloc] init];
-    titleLabel.text = @"GPS Location Simulator";
-    titleLabel.textColor = [UIColor whiteColor];
-    titleLabel.font = [UIFont boldSystemFontOfSize:22];
-    titleLabel.textAlignment = NSTextAlignmentCenter;
-    titleLabel.translatesAutoresizingMaskIntoConstraints = NO;
-    [self.view addSubview:titleLabel];
-    
-    UILabel *idLabel = [[UILabel alloc] init];
-    idLabel.text = [NSString stringWithFormat:@"Device ID: %@", GetShortDeviceID()];
-    idLabel.textColor = [UIColor systemGrayColor];
-    idLabel.font = [UIFont monospacedSystemFontOfSize:15 weight:UIFontWeightMedium];
-    idLabel.textAlignment = NSTextAlignmentCenter;
-    idLabel.translatesAutoresizingMaskIntoConstraints = NO;
-    [self.view addSubview:idLabel];
-    
-    self.codeField = [[UITextField alloc] init];
-    self.codeField.placeholder = @"Enter Activation Key";
-    self.codeField.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.1];
-    self.codeField.textColor = [UIColor whiteColor];
-    self.codeField.textAlignment = NSTextAlignmentCenter;
-    self.codeField.layer.cornerRadius = 10;
-    self.codeField.delegate = self;
-    self.codeField.translatesAutoresizingMaskIntoConstraints = NO;
-    [self.view addSubview:self.codeField];
-    
-    UIButton *actBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    [actBtn setTitle:@"Activate" forState:UIControlStateNormal];
-    actBtn.backgroundColor = [UIColor systemRedColor];
-    [actBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    actBtn.titleLabel.font = [UIFont boldSystemFontOfSize:16];
-    actBtn.layer.cornerRadius = 10;
-    actBtn.translatesAutoresizingMaskIntoConstraints = NO;
-    [actBtn addTarget:self action:@selector(handleActivate) forControlEvents:UIControlEventTouchUpInside];
-    [self.view addSubview:actBtn];
-    
-    [NSLayoutConstraint activateConstraints:@[
-        [titleLabel.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor constant:80],
-        [titleLabel.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],
-        
-        [idLabel.topAnchor constraintEqualToAnchor:titleLabel.bottomAnchor constant:12],
-        [idLabel.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],
-        
-        [self.codeField.topAnchor constraintEqualToAnchor:idLabel.bottomAnchor constant:30],
-        [self.codeField.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],
-        [self.codeField.widthAnchor constraintEqualToConstant:280],
-        [self.codeField.heightAnchor constraintEqualToConstant:44],
-        
-        [actBtn.topAnchor constraintEqualToAnchor:self.codeField.bottomAnchor constant:15],
-        [actBtn.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],
-        [actBtn.widthAnchor constraintEqualToConstant:280],
-        [actBtn.heightAnchor constraintEqualToConstant:44]
-    ]];
-}
-
-- (void)handleActivate {
-    [self.view endEditing:YES];
-    NSString *key = [self.codeField.text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-    if (VerifyLicenseKey(key)) {
-        [[NSUserDefaults standardUserDefaults] setObject:key forKey:@"kSavedCustomLicenseKey"];
-        [[NSUserDefaults standardUserDefaults] synchronize];
-        [self dismissViewControllerAnimated:YES completion:nil];
-    } else {
-        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Invalid Key" message:@"The license key is invalid or expired." preferredStyle:UIAlertControllerStyleAlert];
-        [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
-        [self presentViewController:alert animated:YES completion:nil];
+    // فحص العناصر الفرعية
+    for (UIView *sub in view.subviews) {
+        TranslateViewToEnglish(sub, shortID);
     }
 }
-@end
 
-// --- 2. إجبار اللغة الإنجليزية وتعطيل السيرفر القديم ---
+// --- اعتراض CLSActivationViewController ---
 
-static NSString* Hooked_language(id self, SEL _cmd) {
+static void (*orig_CLSActivationVC_viewDidLoad)(id, SEL);
+static void hook_CLSActivationVC_viewDidLoad(UIViewController *self, SEL _cmd) {
+    orig_CLSActivationVC_viewDidLoad(self, _cmd);
+    
+    // الحصول على الـ UDID المختصر (8 خانات)
+    UILabel *udidLbl = [self valueForKey:@"_udidLabel"];
+    NSString *raw = udidLbl.text ?: @"";
+    // استخراج أول 8 خانات
+    NSRegularExpression *regex = [NSRegularExpression regularExpressionWithPattern:@"[A-Fa-f0-9]{8}" options:0 error:nil];
+    NSTextCheckingResult *match = [regex firstMatchInString:raw options:0 range:NSMakeRange(0, raw.length)];
+    NSString *shortID = match ? [raw substringWithRange:match.range] : GetCleanShortID(raw);
+    
+    // حفظ الـ Short ID للاستخدام في زر النسخ والتحقق
+    objc_setAssociatedObject(self, "kShortDeviceID", shortID, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    
+    // تحويل جميع النصوص داخل الواجهة إلى الإنجليزية
+    TranslateViewToEnglish(self.view, shortID);
+}
+
+// اعتراض زر النسخ لنسخ الـ 8 خانات فقط
+static void hook_CLSActivationVC_copyUDID(id self, SEL _cmd) {
+    NSString *shortID = objc_getAssociatedObject(self, "kShortDeviceID") ?: @"A1B2C3D4";
+    [UIPasteboard generalPasteboard].string = shortID;
+    
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Copied"
+                                                                   message:[NSString stringWithFormat:@"Device ID: %@ copied to clipboard!", shortID]
+                                                            preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
+// --- اعتراض السيرفر والتحقق من التفعيل ---
+
+static void hook_verifyCodeWithServer(id self, SEL _cmd, NSString *code, NSString *udid, BOOL isBg, void(^completion)(BOOL, NSString*)) {
+    NSString *shortID = GetCleanShortID(udid);
+    
+    // التحقق من المفتاح أوفلاين
+    if (VerifyLicense(code, shortID)) {
+        // تسجيل التفعيل بنجاح
+        [[NSUserDefaults standardUserDefaults] setBool:YES forKey:@"gufran_is_activated"];
+        [[NSUserDefaults standardUserDefaults] setObject:code forKey:@"gufran_saved_code"];
+        [[NSUserDefaults standardUserDefaults] setObject:udid forKey:@"gufran_locked_udid"];
+        [[NSUserDefaults standardUserDefaults] synchronize];
+        
+        if (completion) {
+            completion(YES, @"Activated successfully!");
+        }
+    } else {
+        if (completion) {
+            completion(NO, @"Invalid or expired activation code.");
+        }
+    }
+}
+
+// إجبار اللغة الإنجليزية في كامل التطبيق
+static NSString* hook_language(id self, SEL _cmd) {
     return @"en";
 }
 
-static void Hooked_setLanguage(id self, SEL _cmd, NSString *lang) {
-    // إهمال أي محاولة لتغيير اللغة
-}
-
-static void Hooked_enforceActivation(id self, SEL _cmd) {
-    NSString *saved = [[NSUserDefaults standardUserDefaults] stringForKey:@"kSavedCustomLicenseKey"];
-    if (!VerifyLicenseKey(saved)) {
-        dispatch_async(dispatch_get_main_queue(), ^{
-            UIWindow *keyWin = nil;
-            for (UIWindow *w in [UIApplication sharedApplication].windows) {
-                if (w.isKeyWindow) { keyWin = w; break; }
-            }
-            if (keyWin.rootViewController && ![keyWin.rootViewController.presentedViewController isKindOfClass:[CustomActivationVC class]]) {
-                CustomActivationVC *vc = [[CustomActivationVC alloc] init];
-                vc.modalPresentationStyle = UIModalPresentationFullScreen;
-                [keyWin.rootViewController presentViewController:vc animated:YES completion:nil];
-            }
-        });
-    }
-}
-
+// دالة التهيئة والاعتراض الفوري
 __attribute__((constructor))
-static void InitPatch() {
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        // تثبيت اللغة الإنجليزية
-        Class clsManager = NSClassFromString(@"CLSManager");
-        if (clsManager) {
-            Method m1 = class_getInstanceMethod(clsManager, NSSelectorFromString(@"language"));
-            if (m1) method_setImplementation(m1, (IMP)Hooked_language);
-            
-            Method m2 = class_getInstanceMethod(clsManager, NSSelectorFromString(@"setLanguage:"));
-            if (m2) method_setImplementation(m2, (IMP)Hooked_setLanguage);
-            
-            Method m3 = class_getInstanceMethod(clsManager, NSSelectorFromString(@"setLanguageTo:"));
-            if (m3) method_setImplementation(m3, (IMP)Hooked_setLanguage);
+static void InitHook() {
+    // ضبط اللغة الإنجليزية في الإعدادات فوراً
+    [[NSUserDefaults standardUserDefaults] setObject:@"en" forKey:@"cls_language"];
+    [[NSUserDefaults standardUserDefaults] synchronize];
+    
+    // 1. اعتراض شاشة التفعيل لتحويلها للإنجليزية وإظهار 8 خانات
+    Class actVC = NSClassFromString(@"CLSActivationViewController");
+    if (actVC) {
+        Method m1 = class_getInstanceMethod(actVC, @selector(viewDidLoad));
+        if (m1) {
+            orig_CLSActivationVC_viewDidLoad = (void(*)(id, SEL))method_getImplementation(m1);
+            method_setImplementation(m1, (IMP)hook_CLSActivationVC_viewDidLoad);
         }
         
-        // استبدال التحقق القديم بالنظام الجديد
-        Class actManager = objc_getMetaClass("GUFRANActivationManager");
-        if (actManager) {
-            Method mEnforce = class_getClassMethod(actManager, NSSelectorFromString(@"enforceActivation"));
-            if (mEnforce) method_setImplementation(mEnforce, (IMP)Hooked_enforceActivation);
-            
-            Method mCheck = class_getClassMethod(actManager, NSSelectorFromString(@"checkStateAndPrompt"));
-            if (mCheck) method_setImplementation(mCheck, (IMP)Hooked_enforceActivation);
+        Method mCopy = class_getInstanceMethod(actVC, NSSelectorFromString(@"copyUDID"));
+        if (mCopy) {
+            method_setImplementation(mCopy, (IMP)hook_CLSActivationVC_copyUDID);
         }
-    });
+    }
+    
+    // 2. اعتراض دالة التحقق من السيرفر القديم
+    Class actMgr = objc_getMetaClass("GUFRANActivationManager");
+    if (actMgr) {
+        Method mVerify = class_getClassMethod(actMgr, NSSelectorFromString(@"verifyCodeWithServer:udid:isBackground:completion:"));
+        if (mVerify) {
+            method_setImplementation(mVerify, (IMP)hook_verifyCodeWithServer);
+        }
+    }
+    
+    // 3. إجبار اللغة الإنجليزية في كلاس الإدارة
+    Class clsMgr = NSClassFromString(@"CLSManager");
+    if (clsMgr) {
+        Method mLang = class_getInstanceMethod(clsMgr, NSSelectorFromString(@"language"));
+        if (mLang) method_setImplementation(mLang, (IMP)hook_language);
+    }
 }
