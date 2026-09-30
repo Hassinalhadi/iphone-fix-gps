@@ -1,4 +1,4 @@
-name: Theos Analysis & Build Pipeline
+name: Decompile & Extract Dylib
 
 on:
   push:
@@ -6,57 +6,53 @@ on:
   workflow_dispatch:
 
 jobs:
-  analyze-and-build:
+  analyze-dylib:
     runs-on: macos-latest
 
     steps:
-      - name: جلب الكود من المستودع
+      - name: 1. جلب ملفات المستودع
         uses: actions/checkout@v4
 
-      - name: تثبيت أدوات الفحص والهندسة العكسية
+      - name: 2. تجهيز مجلدات المخرجات
         run: |
-          brew update
-          brew install class-dump || true
-          mkdir -p output/headers output/analysis
+          mkdir -p output/headers
+          mkdir -p output/analysis
 
-      - name: 1. استخراج الـ Headers ومعلومات المكتبة
+      - name: 3. تحميل أداة dsdump لمعمارية ARM64
         run: |
-          echo "=== فحص المكتبة الأصلية ==="
-          file hsrider.dylib > output/analysis/info.txt
-          otool -L hsrider.dylib >> output/analysis/info.txt
+          # تحميل أداة dsdump الحديثة المخصصة لاستخراج كلاسات Objective-C
+          curl -sL "https://github.com/DerekSelander/dsdump/releases/download/v0.1.1/dsdump_macOS.zip" -o dsdump.zip
+          unzip -q dsdump.zip
+          chmod +x dsdump
+          sudo mv dsdump /usr/local/bin/ || mv dsdump .
+
+      - name: 4. استخراج الترويسات (Headers) وهيكل الكلاسات
+        run: |
+          DSDUMP_BIN=$(which dsdump 2>/dev/null || echo "./dsdump")
           
-          # استخراج نصوص ورموز المكتبة
+          # استخراج الواجهات الكاملة Objective-C
+          $DSDUMP_BIN --objc -u hsrider.dylib > output/headers/AllClasses.h || true
+          
+          # استخراج البروتوكولات والـ Symbols بالتفصيل
+          $DSDUMP_BIN -a -u hsrider.dylib > output/headers/FullSymbolsDump.txt || true
+
+      - name: 5. استخراج النصوص، الرموز، والتفكيك (Disassembly)
+        run: |
+          # استخراج كافة النصوص المضمنة (روابط، رسائل، متغيرات)
           strings -a hsrider.dylib > output/analysis/strings.txt
+          
+          # استخراج جدول الرموز
           nm -gU hsrider.dylib > output/analysis/symbols.txt
           
-          # استخراج واجهات Objective-C
-          if command -v class-dump &> /dev/null; then
-            class-dump -H -o output/headers hsrider.dylib || true
-          fi
-
-      - name: 2. إعداد بيئة Theos والـ SDK
-        run: |
-          git clone --recursive https://github.com/theos/theos.git ~/theos
-          echo "THEOS=~/theos" >> $GITHUB_ENV
+          # استخراج المكتبات المترابطة
+          otool -L hsrider.dylib > output/analysis/linked_libraries.txt
           
-          # جلب iOS SDK متوافق مع ARM64
-          git clone --quiet https://github.com/theos/sdks.git ~/theos/sdks-repo
-          cp -r ~/theos/sdks-repo/iPhoneOS14.4.sdk ~/theos/sdks/ || true
+          # تفكيك تعليمات التجميع ARM64
+          otool -tvV hsrider.dylib > output/analysis/disassembly.asm
 
-      - name: 3. بناء الأداة المعدلة عبر Theos
-        run: |
-          export THEOS=~/theos
-          # تجميع وبناء حزمة .deb
-          make package FINALPACKAGE=1
-
-      - name: 4. رفع مخرجات التحليل والملفات المستخرجة
+      - name: 6. رفع كافة المخرجات المستخرجة
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Extracted-Headers-And-Analysis
+          name: hsrider-decompiled-files
           path: output/
-
-      - name: 5. رفع حزمة Theos الناتجة (.deb)
-        uses: actions/upload-artifact@v4
-        with:
-          name: Built-Tweak-Package
-          path: packages/*.deb
