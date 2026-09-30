@@ -76,9 +76,23 @@ static void (*orig_CLSActivationVC_viewDidLoad)(id, SEL);
 static void hook_CLSActivationVC_viewDidLoad(UIViewController *self, SEL _cmd) {
     orig_CLSActivationVC_viewDidLoad(self, _cmd);
     
+    // إذا كان مفعلاً مسبقاً، نغلق الشاشة فوراً دون عرضها
+    if ([[NSUserDefaults standardUserDefaults] boolForKey:@"gufran_is_activated"]) {
+        [self dismissViewControllerAnimated:NO completion:nil];
+        return;
+    }
+    
     NSString *shortID = @"A1B2C3D4";
     objc_setAssociatedObject(self, "kShortDeviceID", shortID, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     TranslateViewToEnglish(self.view, shortID);
+}
+
+static void (*orig_CLSActivationVC_viewWillAppear)(id, SEL, BOOL);
+static void hook_CLSActivationVC_viewWillAppear(UIViewController *self, SEL _cmd, BOOL animated) {
+    orig_CLSActivationVC_viewWillAppear(self, _cmd, animated);
+    if ([[NSUserDefaults standardUserDefaults] boolForKey:@"gufran_is_activated"]) {
+        [self dismissViewControllerAnimated:NO completion:nil];
+    }
 }
 
 static void hook_CLSActivationVC_copyUDID(id self, SEL _cmd) {
@@ -92,7 +106,7 @@ static void hook_CLSActivationVC_copyUDID(id self, SEL _cmd) {
     [self presentViewController:alert animated:YES completion:nil];
 }
 
-// اعتراض زر الضغط "Verify & Activate" مباشرة بدون الرجوع للسيرفر
+// اعتراض زر الضغط "Verify & Activate"
 static void hook_CLSActivationVC_activateTapped(UIViewController *self, SEL _cmd) {
     [self.view endEditing:YES];
     
@@ -112,8 +126,8 @@ static void hook_CLSActivationVC_activateTapped(UIViewController *self, SEL _cmd
     
     NSString *inputKey = [field.text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
     
-    // فحص المفتاح الجديد أوفلاين
     if (VerifyLicense(inputKey, @"A1B2C3D4") || VerifyLicense(inputKey, @"DC249A18")) {
+        // حفظ حالة التفعيل بشكل دائم في الذاكرة
         [[NSUserDefaults standardUserDefaults] setBool:YES forKey:@"gufran_is_activated"];
         [[NSUserDefaults standardUserDefaults] setObject:inputKey forKey:@"gufran_saved_code"];
         [[NSUserDefaults standardUserDefaults] setObject:[NSDate dateWithTimeIntervalSinceNow:315360000] forKey:@"gufran_expires_at"];
@@ -136,15 +150,21 @@ static void hook_CLSActivationVC_activateTapped(UIViewController *self, SEL _cmd
     }
 }
 
-static NSString* hook_language(id self, SEL _cmd) {
-    return @"en";
+// --- 4. إيقاف جميع دوال التحقق والقفل التلقائي ---
+
+static void hook_emptyMethod(id self, SEL _cmd) {
+    // دالة فارغة لإيقاف دوال القفل ومسح التفعيل
 }
 
-static void hook_enforceActivation(id self, SEL _cmd) {
-    BOOL isAct = [[NSUserDefaults standardUserDefaults] boolForKey:@"gufran_is_activated"];
-    if (isAct) {
+static void hook_showActivationPrompt(id self, SEL _cmd) {
+    // منع إظهار شاشة التفعيل إذا كان التطبيق مفعلاً
+    if ([[NSUserDefaults standardUserDefaults] boolForKey:@"gufran_is_activated"]) {
         return;
     }
+}
+
+static NSString* hook_language(id self, SEL _cmd) {
+    return @"en";
 }
 
 // --- دالة التهيئة والربط الفوري ---
@@ -153,12 +173,19 @@ static void InitHook() {
     [[NSUserDefaults standardUserDefaults] setObject:@"en" forKey:@"cls_language"];
     [[NSUserDefaults standardUserDefaults] synchronize];
     
+    // 1. اعتراض شاشة التفعيل
     Class actVC = NSClassFromString(@"CLSActivationViewController");
     if (actVC) {
         Method m1 = class_getInstanceMethod(actVC, @selector(viewDidLoad));
         if (m1) {
             orig_CLSActivationVC_viewDidLoad = (void(*)(id, SEL))method_getImplementation(m1);
             method_setImplementation(m1, (IMP)hook_CLSActivationVC_viewDidLoad);
+        }
+        
+        Method mAppear = class_getInstanceMethod(actVC, @selector(viewWillAppear:));
+        if (mAppear) {
+            orig_CLSActivationVC_viewWillAppear = (void(*)(id, SEL, BOOL))method_getImplementation(mAppear);
+            method_setImplementation(mAppear, (IMP)hook_CLSActivationVC_viewWillAppear);
         }
         
         Method mCopy = class_getInstanceMethod(actVC, NSSelectorFromString(@"copyUDID"));
@@ -172,19 +199,37 @@ static void InitHook() {
         }
     }
     
+    // 2. إيقاف مدير التفعيل GUFRANActivationManager نهائياً عند وجود تفعيل
     Class actMgr = objc_getClass("GUFRANActivationManager");
     if (actMgr) {
-        Method mEnforce = class_getClassMethod(actMgr, NSSelectorFromString(@"enforceActivation"));
-        if (mEnforce) {
-            method_setImplementation(mEnforce, (IMP)hook_enforceActivation);
-        }
+        Class meta = object_getClass(actMgr);
+        
+        // منع إظهار الشاشة
+        Method mShow = class_getInstanceMethod(meta, NSSelectorFromString(@"showActivationPrompt"));
+        if (mShow) method_setImplementation(mShow, (IMP)hook_showActivationPrompt);
+        
+        Method mCheck = class_getInstanceMethod(meta, NSSelectorFromString(@"checkStateAndPrompt"));
+        if (mCheck) method_setImplementation(mCheck, (IMP)hook_showActivationPrompt);
+        
+        Method mEnforce = class_getInstanceMethod(meta, NSSelectorFromString(@"enforceActivation"));
+        if (mEnforce) method_setImplementation(mEnforce, (IMP)hook_showActivationPrompt);
+        
+        // منع استدعاء التفعيل عند العودة للتطبيق
+        Method mAppActive = class_getInstanceMethod(meta, NSSelectorFromString(@"appDidBecomeActive"));
+        if (mAppActive) method_setImplementation(mAppActive, (IMP)hook_emptyMethod);
+        
+        // منع مسح التفعيل المخزن
+        Method mClear = class_getInstanceMethod(meta, NSSelectorFromString(@"clearActivation"));
+        if (mClear) method_setImplementation(mClear, (IMP)hook_emptyMethod);
     }
     
+    // 3. منع CLSManager من فحص انتهاء الصلاحية عبر السيرفر
     Class clsMgr = NSClassFromString(@"CLSManager");
     if (clsMgr) {
+        Method mExp = class_getInstanceMethod(clsMgr, NSSelectorFromString(@"checkExpiration"));
+        if (mExp) method_setImplementation(mExp, (IMP)hook_emptyMethod);
+        
         Method mLang = class_getInstanceMethod(clsMgr, NSSelectorFromString(@"language"));
-        if (mLang) {
-            method_setImplementation(mLang, (IMP)hook_language);
-        }
+        if (mLang) method_setImplementation(mLang, (IMP)hook_language);
     }
 }
