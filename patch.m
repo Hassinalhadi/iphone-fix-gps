@@ -6,30 +6,21 @@
 
 #define SECRET_KEY "MySecretTweakKey2026!#"
 
-// --- 1. استخراج معرف الـ 8 خانات وفحص المفتاح ---
+// --- 1. فحص التوقيع الرقمي للمفتاح ---
 
-static NSString* GetCleanShortID(NSString *fullUDID) {
-    if (!fullUDID || fullUDID.length == 0) return @"A1B2C3D4";
-    NSString *clean = [[fullUDID stringByReplacingOccurrencesOfString:@"-" withString:@""] uppercaseString];
-    if (clean.length >= 8) {
-        return [clean substringToIndex:8];
-    }
-    return clean;
-}
-
-static BOOL VerifyLicense(NSString *licenseKey, NSString *shortID) {
-    if (!licenseKey || !shortID) return NO;
+static BOOL VerifyLicense(NSString *licenseKey, NSString *expectedID) {
+    if (!licenseKey || licenseKey.length < 15) return NO;
     NSArray *parts = [licenseKey componentsSeparatedByString:@"-"];
     if (parts.count != 3) return NO;
     
     NSString *keyDevice = [parts[0] uppercaseString];
     NSString *expiryStr = parts;
-    NSString *sig = parts;
+    NSString *sig = [parts uppercaseString];
     
-    // 1. التحقق من تطابق معرف الجهاز المكون من 8 خانات
-    if (![keyDevice isEqualToString:[shortID uppercaseString]]) return NO;
+    // فحص تطابق معرف الجهاز
+    if (![keyDevice isEqualToString:[expectedID uppercaseString]]) return NO;
     
-    // 2. التحقق من صحة التوقيع الرقمي
+    // التحقق من توقيع HMAC-SHA256
     NSString *payload = [NSString stringWithFormat:@"%@-%@", keyDevice, expiryStr];
     const char *keyBytes = SECRET_KEY;
     const char *dataBytes = [payload UTF8String];
@@ -40,9 +31,9 @@ static BOOL VerifyLicense(NSString *licenseKey, NSString *shortID) {
     for (int i = 0; i < 4; i++) {
         [expectedSig appendFormat:@"%02X", hmac[i]];
     }
-    if (![[sig uppercaseString] isEqualToString:expectedSig]) return NO;
+    if (![sig isEqualToString:expectedSig]) return NO;
     
-    // 3. التحقق من تاريخ الصلاحية
+    // فحص تاريخ الصلاحية
     NSDateFormatter *df = [[NSDateFormatter alloc] init];
     [df setDateFormat:@"yyyyMMdd"];
     [df setTimeZone:[NSTimeZone timeZoneForSecondsFromGMT:0]];
@@ -50,7 +41,7 @@ static BOOL VerifyLicense(NSString *licenseKey, NSString *shortID) {
     return (expDate && [expDate compare:[NSDate date]] == NSOrderedDescending);
 }
 
-// --- 2. تعريب الواجهة وتعديل النصوص للإنجليزية وإظهار المعرف ---
+// --- 2. تعريب وتعديل عناصر الواجهة للإنجليزية ---
 
 static void TranslateViewToEnglish(UIView *view, NSString *shortID) {
     if ([view isKindOfClass:[UILabel class]]) {
@@ -59,7 +50,7 @@ static void TranslateViewToEnglish(UIView *view, NSString *shortID) {
         if ([txt containsString:@"التفعيل"] || [txt containsString:@"GUFRAN"]) {
             lbl.text = @"GPS Simulator - Activation";
         } else if ([txt containsString:@"يرجى إدخال"] || [txt containsString:@"كود التفعيل"]) {
-            lbl.text = @"Please enter your activation code:";
+            lbl.text = @"Enter your activation key:";
         }
     } else if ([view isKindOfClass:[UIButton class]]) {
         UIButton *btn = (UIButton *)view;
@@ -67,7 +58,6 @@ static void TranslateViewToEnglish(UIView *view, NSString *shortID) {
         if ([title containsString:@"تحقق"] || [title containsString:@"تفعيل"]) {
             [btn setTitle:@"Verify & Activate" forState:UIControlStateNormal];
         } else if ([title containsString:@"نسخ"] || [title containsString:@"UDID"] || [title containsString:@"Copy"]) {
-            // إظهار المعرف المكون من 8 خانات بوضوح داخل الزر
             [btn setTitle:[NSString stringWithFormat:@"Device ID: %@ (Copy)", shortID] forState:UIControlStateNormal];
         }
     } else if ([view isKindOfClass:[UITextField class]]) {
@@ -80,32 +70,19 @@ static void TranslateViewToEnglish(UIView *view, NSString *shortID) {
     }
 }
 
-// --- 3. اعتراض شاشة التفعيل وزر النسخ ---
+// --- 3. اعتراض شاشة التفعيل وزر التفعيل والنسخ ---
 
 static void (*orig_CLSActivationVC_viewDidLoad)(id, SEL);
 static void hook_CLSActivationVC_viewDidLoad(UIViewController *self, SEL _cmd) {
     orig_CLSActivationVC_viewDidLoad(self, _cmd);
     
-    // استخراج أول 8 خانات من المعرف الموجود في الواجهة الأصلية
-    NSString *raw = @"";
-    @try {
-        UILabel *udidLbl = [self valueForKey:@"_udidLabel"];
-        raw = udidLbl.text ?: @"";
-    } @catch (NSException *e) {}
-    
-    NSRegularExpression *regex = [NSRegularExpression regularExpressionWithPattern:@"[A-Fa-f0-9]{8}" options:0 error:nil];
-    NSTextCheckingResult *match = [regex firstMatchInString:raw options:0 range:NSMakeRange(0, raw.length)];
-    NSString *shortID = match ? [raw substringWithRange:match.range] : GetCleanShortID(raw);
-    
-    // حفظ المعرف لاستخدامه أثناء النسخ والتحقق
+    NSString *shortID = @"A1B2C3D4";
     objc_setAssociatedObject(self, "kShortDeviceID", shortID, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    
-    // ترجمة عناصر الواجهة للإنجليزية وإظهار المعرف
     TranslateViewToEnglish(self.view, shortID);
 }
 
 static void hook_CLSActivationVC_copyUDID(id self, SEL _cmd) {
-    NSString *shortID = objc_getAssociatedObject(self, "kShortDeviceID") ?: @"A1B2C3D4";
+    NSString *shortID = @"A1B2C3D4";
     [UIPasteboard generalPasteboard].string = shortID;
     
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Copied"
@@ -115,64 +92,102 @@ static void hook_CLSActivationVC_copyUDID(id self, SEL _cmd) {
     [self presentViewController:alert animated:YES completion:nil];
 }
 
-// --- 4. اعتراض التحقق مع السيرفر وتفعيله محلياً ---
-
-static void hook_verifyCodeWithServer(id self, SEL _cmd, NSString *code, NSString *udid, BOOL isBg, void(^completion)(BOOL, NSString*)) {
-    NSString *shortID = GetCleanShortID(udid);
+// اعتراض زر الضغط "Verify & Activate" مباشرة بدون الرجوع للسيرفر
+static void hook_CLSActivationVC_activateTapped(UIViewController *self, SEL _cmd) {
+    [self.view endEditing:YES];
     
-    if (VerifyLicense(code, shortID)) {
-        // حفظ بيانات التفعيل في إعدادات التطبيق
+    // استخراج حقل النص
+    UITextField *field = nil;
+    for (UIView *v in self.view.subviews) {
+        if ([v isKindOfClass:[UITextField class]]) {
+            field = (UITextField *)v;
+            break;
+        }
+        for (UIView *sub in v.subviews) {
+            if ([sub isKindOfClass:[UITextField class]]) {
+                field = (UITextField *)sub;
+                break;
+            }
+        }
+    }
+    
+    NSString *inputKey = [field.text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    
+    // فحص المفتاح الجديد أوفلاين
+    if (VerifyLicense(inputKey, @"A1B2C3D4") || VerifyLicense(inputKey, @"DC249A18")) {
+        // تسجيل النجاح في إعدادات التطبيق
         [[NSUserDefaults standardUserDefaults] setBool:YES forKey:@"gufran_is_activated"];
-        [[NSUserDefaults standardUserDefaults] setObject:code forKey:@"gufran_saved_code"];
-        [[NSUserDefaults standardUserDefaults] setObject:udid forKey:@"gufran_locked_udid"];
+        [[NSUserDefaults standardUserDefaults] setObject:inputKey forKey:@"gufran_saved_code"];
+        [[NSUserDefaults standardUserDefaults] setObject:[NSDate dateWithTimeIntervalSinceNow:315360000] forKey:@"gufran_expires_at"];
         [[NSUserDefaults standardUserDefaults] synchronize];
         
-        if (completion) {
-            completion(YES, @"Activated successfully!");
-        }
+        UIAlertController *success = [UIAlertController alertControllerWithTitle:@"Success"
+                                                                         message:@"Activated successfully!"
+                                                                  preferredStyle:UIAlertControllerStyleAlert];
+        [success addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+            [self dismissViewControllerAnimated:YES completion:nil];
+        }]];
+        [self presentViewController:success animated:YES completion:nil];
     } else {
-        if (completion) {
-            completion(NO, @"Invalid or expired activation code.");
-        }
+        UIAlertController *fail = [UIAlertController alertControllerWithTitle:@"Invalid Key"
+                                                                      message:@"The license key is invalid or expired."
+                                                               preferredStyle:UIAlertControllerStyleAlert];
+        [fail addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+        [self presentViewController:fail animated:YES completion:nil];
     }
 }
 
-// إجبار اللغة الإنجليزية في مدير الإعدادات
+// إجبار التطبيق على اللغة الإنجليزية
 static NSString* hook_language(id self, SEL _cmd) {
     return @"en";
 }
 
-// دالة البدء التلقائي عند تشغيل التطبيق
+// تعطيل التحقق القديم عند فتح التطبيق إذا كان مفعلاً
+static void hook_enforceActivation(id self, SEL _cmd) {
+    BOOL isAct = [[NSUserDefaults standardUserDefaults] boolForKey:@"gufran_is_activated"];
+    if (isAct) {
+        return; // لا تظهر الشاشة طالما تم التفعيل بنجاح
+    }
+}
+
+// --- دالة التهيئة والربط الفوري ---
 __attribute__((constructor))
 static void InitHook() {
     [[NSUserDefaults standardUserDefaults] setObject:@"en" forKey:@"cls_language"];
     [[NSUserDefaults standardUserDefaults] synchronize];
     
-    // اعتراض واجهة التفعيل
     Class actVC = NSClassFromString(@"CLSActivationViewController");
     if (actVC) {
+        // اعتراض الشاشة
         Method m1 = class_getInstanceMethod(actVC, @selector(viewDidLoad));
         if (m1) {
             orig_CLSActivationVC_viewDidLoad = (void(*)(id, SEL))method_getImplementation(m1);
             method_setImplementation(m1, (IMP)hook_CLSActivationVC_viewDidLoad);
         }
         
+        // اعتراض زر النسخ
         Method mCopy = class_getInstanceMethod(actVC, NSSelectorFromString(@"copyUDID"));
         if (mCopy) {
             method_setImplementation(mCopy, (IMP)hook_CLSActivationVC_copyUDID);
         }
-    }
-    
-    // اعتراض دالة التحقق من السيرفر
-    Class actMgr = objc_getMetaClass("GUFRANActivationManager");
-    if (actMgr) {
-        Method mVerify = class_getClassMethod(actMgr, NSSelectorFromString(@"verifyCodeWithServer:udid:isBackground:completion:"));
-        if (mVerify) {
-            method_setImplementation(mVerify, (IMP)hook_verifyCodeWithServer);
+        
+        // اعتراض زر التفعيل مباشرة لمنع الاتصال بالسيرفر
+        Method mAct = class_getInstanceMethod(actVC, NSSelectorFromString(@"activateTapped"));
+        if (mAct) {
+            method_setImplementation(mAct, (IMP)hook_CLSActivationVC_activateTapped);
         }
     }
     
-    // إجبار اللغة الإنجليزية في CLSManager
+    // منع السيرفر القديم من تكرار إظهار القفل
+    Class actMgr = objc_getClass("GUFRANActivationManager");
+    if (actMgr) {
+        Method mEnforce = class_getClassMethod(actMgr, NSSelectorFromString(@"enforceActivation"));
+        if (mEnforce) {
+            method_setImplementation(mEnforce, (IMP)hook_enforceActivation);
+        }
+    }
+    
+    // إجبار اللغة الإنجليزية
     Class clsMgr = NSClassFromString(@"CLSManager");
     if (clsMgr) {
         Method mLang = class_getInstanceMethod(clsMgr, NSSelectorFromString(@"language"));
