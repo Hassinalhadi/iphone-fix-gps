@@ -2,8 +2,7 @@ Package: com.custom.cleanrider
 Name: CleanRider
 Depends: mobilesubstrate
 Version: 1.0.0
-Architecture: iphoneos-arm64
-Description: Location spoofer rebuilt without external dependencies
+Description: Location spoofer rebuilt
 Maintainer: Developer
 Author: Developer
 Section: Tweaks
