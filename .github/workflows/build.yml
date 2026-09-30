@@ -17,7 +17,7 @@ jobs:
         run: |
           mkdir -p output
           
-          # استخدام -dynamiclib الصحيح لمعمارية arm64 ونظام iOS
+          # تجميع كود الاعتراض وربطه بـ hsrider.dylib
           xcrun -sdk iphoneos clang -arch arm64 -dynamiclib \
             -isysroot $(xcrun --sdk iphoneos --show-sdk-path) \
             -miphoneos-version-min=14.0 \
@@ -25,8 +25,8 @@ jobs:
             -fobjc-arc -Wno-deprecated-declarations \
             patch.m -o output/hsrider_patch.dylib
 
-          # العثور على ملف hsrider.dylib ونسخه تلقائياً
-          find . -maxdepth 2 -name "*.dylib" -not -path "./output/*" -exec cp {} output/hsrider.dylib \;
+          # التأكد من وجود hsrider.dylib
+          cp hsrider.dylib output/
 
       - name: Upload Final Dylib Bundle
         uses: actions/upload-artifact@v4
