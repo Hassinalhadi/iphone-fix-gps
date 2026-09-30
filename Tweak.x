@@ -3,36 +3,26 @@
 #import <MapKit/MapKit.h>
 
 static BOOL isSpoofEnabled = YES;
-static CLLocationCoordinate2D customCoords = {33.3152, 44.3661}; // الإحداثيات الافتراضية
+static CLLocationCoordinate2D customCoords = {33.3152, 44.3661};
 
 // 1. اعتراض الموقع الجغرافي الأساسي
 %hook CLLocationManager
 
 - (CLLocation *)location {
     if (isSpoofEnabled) {
-        return [[CLLocation alloc] initWithCoordinate:customCoords
-                                             altitude:20.0
-                                   horizontalAccuracy:5.0
-                                     verticalAccuracy:5.0
-                                               course:0.0
-                                                speed:0.0
-                                            timestamp:[NSDate date]];
+        return [[CLLocation alloc] initWithLatitude:customCoords.latitude longitude:customCoords.longitude];
     }
     return %orig;
 }
 
 %end
 
-// 2. اعتراض موقع المستخدم داخل الخرائط
+// 2. اعتراض موقع المستخدم في الخرائط
 %hook MKUserLocation
 
 - (CLLocation *)location {
     if (isSpoofEnabled) {
-        return [[CLLocation alloc] initWithCoordinate:customCoords
-                                             altitude:20.0
-                                   horizontalAccuracy:5.0
-                                     verticalAccuracy:5.0
-                                            timestamp:[NSDate date]];
+        return [[CLLocation alloc] initWithLatitude:customCoords.latitude longitude:customCoords.longitude];
     }
     return %orig;
 }
@@ -46,30 +36,31 @@ static CLLocationCoordinate2D customCoords = {33.3152, 44.3661}; // الإحدا
 
 %end
 
-// 3. حقن إيماءة النقر المزدوج لفتح الإعدادات
+// 3. إضافة إيماءة لفتح القائمة
 %hook UIWindow
 
 - (void)makeKeyAndVisible {
     %orig;
-    UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(handleTweakMenu)];
+    UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(handleCleanRiderTap)];
     tap.numberOfTapsRequired = 2;
-    tap.numberOfTouchesRequired = 2; // نقر بإصبعين مرتين
+    tap.numberOfTouchesRequired = 2;
     [self addGestureRecognizer:tap];
 }
 
 %new
-- (void)handleTweakMenu {
+- (void)handleCleanRiderTap {
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"CleanRider"
-                                                                   message:@"التحكم في الموقع"
+                                                                   message:@"حالة تغيير الموقع"
                                                             preferredStyle:UIAlertControllerStyleAlert];
     
-    [alert addAction:[UIAlertAction actionWithTitle:isSpoofEnabled ? @"إيقاف التزييف" : @"تفعيل التزييف"
+    NSString *btnTitle = isSpoofEnabled ? @"إيقاف التزييف" : @"تفعيل التزييف";
+    [alert addAction:[UIAlertAction actionWithTitle:btnTitle
                                               style:UIAlertActionStyleDefault
                                             handler:^(UIAlertAction *action) {
         isSpoofEnabled = !isSpoofEnabled;
     }]];
     
-    [alert addAction:[UIAlertAction actionWithTitle:@"إلغاء" style:UIAlertActionStyleCancel handler:nil]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"إغلاق" style:UIAlertActionStyleCancel handler:nil]];
     
     UIViewController *root = self.rootViewController;
     while (root.presentedViewController) {
