@@ -1,0 +1,9 @@
+Package: com.hassinalhadi.iphonefixgps
+Name: iPhone Fix GPS (hsrider)
+Depends: mobilesubstrate
+Version: 1.0.0
+Architecture: iphoneos-arm
+Description: GPS location handling tweak for iOS
+Maintainer: Hassin
+Author: Hassin
+Section: Tweaks
