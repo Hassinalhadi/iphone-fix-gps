@@ -15,40 +15,56 @@ jobs:
 
       - name: Setup Tools & Environment
         run: |
-          mkdir -p output
-          brew install dsdump llvm || true
+          mkdir -p output bin
+          # تحميل dsdump الجاهز مباشرة من المستودع الرسمي
+          curl -sSL "https://github.com/DerekSelander/dsdump/raw/master/compiled/dsdump" -o bin/dsdump
+          chmod +x bin/dsdump
+          echo "$GITHUB_WORKSPACE/bin" >> $GITHUB_PATH
+
+      - name: Locate Target Dylib
+        run: |
+          # العثور على ملف dylib تلقائياً سواء كان hsrider.dylib أو أي اسم آخر
+          TARGET=$(find . -maxdepth 2 -name "*.dylib" -not -path "*/.*" | head -n 1)
+          if [ -z "$TARGET" ]; then
+            echo "::error::لم يتم العثور على أي ملف .dylib في المستودع!"
+            exit 1
+          fi
+          echo "TARGET_DYLIB=$TARGET" >> $GITHUB_ENV
+          echo "Found dylib: $TARGET"
 
       - name: Extract Mach-O Info & Strings
         run: |
           echo "=== File Architecture ===" > output/info.txt
-          file hsrider.dylib >> output/info.txt
-          otool -hv hsrider.dylib >> output/info.txt
+          file "$TARGET_DYLIB" >> output/info.txt
+          otool -hv "$TARGET_DYLIB" >> output/info.txt
 
-          echo "=== Linked Dynamic Libraries ===" > output/dependencies.txt
-          otool -L hsrider.dylib >> output/dependencies.txt
+          echo "=== Dependencies ===" > output/dependencies.txt
+          otool -L "$TARGET_DYLIB" >> output/dependencies.txt
 
-          echo "=== Text Strings ===" > output/strings.txt
-          strings hsrider.dylib >> output/strings.txt
+          echo "=== Strings ===" > output/strings.txt
+          strings "$TARGET_DYLIB" >> output/strings.txt
 
       - name: Dump Objective-C Headers & Classes
         run: |
-          # استخراج كلاسات وميثودات Objective-C
+          # استخراج كلاسات Objective-C بواسطة dsdump
           if command -v dsdump &> /dev/null; then
-            dsdump --objc --verbose hsrider.dylib > output/objc_classes.h || true
+            dsdump --objc --verbose "$TARGET_DYLIB" > output/objc_classes.h || true
           fi
           
-          # استخراج معلومات الأقسام والبروتوكولات
-          otool -ov hsrider.dylib > output/objc_runtime_structures.txt
+          # استخراج هياكل الميثودات والبروتوكولات عبر otool الأصلي
+          otool -ov "$TARGET_DYLIB" > output/objc_runtime_structures.txt
 
-      - name: Disassemble ARM64 Text Section
+      - name: Disassemble ARM64 Assembly
         run: |
-          # استخراج كود الأسمبلي المفكك
-          llvm-objdump -d --macho --objc-meta-data hsrider.dylib > output/disassembly.asm
-          
+          # التفكيك الكامل للأسمبلي مع ربطه بميثودات Objective-C
+          xcrun llvm-objdump -d --macho --objc-meta-data "$TARGET_DYLIB" > output/disassembly.asm || \
+          otool -tV "$TARGET_DYLIB" > output/disassembly.asm
+
           # استخراج جدول الرموز (Symbols)
-          nm -gU hsrider.dylib > output/symbols.txt || true
+          nm -gU "$TARGET_DYLIB" > output/symbols.txt || true
 
       - name: Upload Analysis Artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: dylib-decompiled-analysis
