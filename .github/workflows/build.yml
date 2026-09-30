@@ -13,24 +13,12 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Prepare Assets
-        run: |
-          mkdir -p output
-          # تحويل صورة الشعار إلى PNG وتضمينها
-          if [ -f "0.jpg" ]; then
-            sips -s format png 0.jpg --out output/logo.png
-          elif [ -f "logo.png" ]; then
-            cp logo.png output/logo.png
-          fi
-
       - name: Compile Patch Library
         run: |
-          # ترجمة كود الـ Patch لمعمارية ARM64 (iOS)
+          mkdir -p output
           xcrun -sdk iphoneos clang -arch arm64 -shared -isysroot $(xcrun --sdk iphoneos --show-sdk-path) \
             -framework Foundation -framework UIKit \
             -fobjc-arc patch.m -o output/hsrider_patch.dylib
-
-          # نسخ المكتبة الأصلية إلى مجلد المخرجات
           cp hsrider.dylib output/
 
       - name: Upload Final Dylib Bundle
