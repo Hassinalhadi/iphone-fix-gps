@@ -1,0 +1,47 @@
+name: Build hsrider Tweak
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Compile iOS Dylib & Package
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Theos Development Environment
+        run: |
+          # تثبيت أدوات Theos الأساسية
+          git clone --recursive https://github.com/theos/theos.git ~/theos
+          echo "THEOS=~/theos" >> $GITHUB_ENV
+
+          # تحميل حزم الـ SDK الخاصة بنظام iOS
+          git clone --depth=1 https://github.com/theos/sdks.git ~/theos/sdks
+
+      - name: Compile Library (Rootless & Rootful)
+        run: |
+          # البناء لبيئة الجيلبريك الحديثة (Rootless)
+          make clean
+          make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless
+          
+          # استخراج ملف الـ dylib المترجم
+          mkdir -p output/dylib output/deb
+          cp -r packages/*.deb output/deb/ || true
+          find .theos/obj -name "*.dylib" -exec cp {} output/dylib/ \; || true
+
+      - name: Upload Built Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: hsrider-build-output
+          path: |
+            output/dylib/*
+            output/deb/*
