@@ -6,7 +6,7 @@
     <dict>
         <key>Bundles</key>
         <array>
-            <string>com.hungerstation.rider</string>
+            <string>com.logistics.rider.hungerstation</string>
         </array>
     </dict>
 </dict>
