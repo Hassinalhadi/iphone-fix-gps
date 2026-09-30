@@ -1,4 +1,4 @@
-name: Decompile & Extract Dylib
+name: Build Theos Tweak
 
 on:
   push:
@@ -6,74 +6,45 @@ on:
   workflow_dispatch:
 
 jobs:
-  analyze-dylib:
+  build-package:
     runs-on: macos-latest
 
     steps:
-      - name: 1. جلب الكود من المستودع
+      - name: 1. جلب ملفات المشروع
         uses: actions/checkout@v4
 
-      - name: 2. تجهيز مجلدات المخرجات
+      - name: 2. تثبيت أدوات الحزم وتوقيع الكود (ldid & dpkg)
         run: |
-          mkdir -p output/headers
-          mkdir -p output/analysis
+          brew update
+          brew install ldid dpkg
 
-      - name: 3. استخراج بيانات Objective-C والترويسات
+      - name: 3. تثبيت بيئة Theos والـ iOS SDKs
         run: |
-          echo "=== جاري فحص واستخراج كلاسات Objective-C ==="
-          # استخراج البنية الكاملة للكلاسات والدوال عبر أداة Apple الرسمية
-          otool -ov hsrider.dylib > output/headers/objc_raw_metadata.txt
-
-          # تحويل بيانات otool إلى ترويسات Objective-C (.h) مقروءة عبر بايثون
-          python3 - << 'EOF'
-          import re
-
-          with open("output/headers/objc_raw_metadata.txt", "r") as f:
-              content = f.read()
-
-          classes = re.findall(r'Meta Class\s+0x[0-9a-f]+\s+([^\n]+).*?Instance Methods\s+.*?(?=\n\w|\Z)', content, re.DOTALL)
+          # استنساخ Theos
+          git clone --recursive https://github.com/theos/theos.git $HOME/theos
           
-          with open("output/headers/ExtractedClasses.h", "w") as out:
-              out.write("// Auto-extracted Objective-C interfaces from hsrider.dylib\n\n")
-              
-              current_class = None
-              for line in content.splitlines():
-                  cls_match = re.search(r'^\s*name\s+0x[0-9a-f]+\s+([A-Za-z0-9_]+)', line)
-                  meth_match = re.search(r'^\s*name\s+0x[0-9a-f]+\s+([A-Za-z0-9_:]+)\s*$', line)
-                  type_match = re.search(r'^\s*types\s+0x[0-9a-f]+\s+([^\n]+)', line)
-                  
-                  if cls_match:
-                      cname = cls_match.group(1)
-                      if cname != current_class and not cname.startswith("v@") and not cname.startswith("@"):
-                          current_class = cname
-                          out.write(f"\n@interface {current_class} : NSObject\n")
-                  elif meth_match and current_class:
-                      mname = meth_match.group(1)
-                      if not mname.startswith("0x"):
-                          out.write(f"- (void){mname};\n")
-                  elif "baseMethods" in line and current_class:
-                      pass
-              out.write("\n@end\n")
-          EOF
+          # جلب مكتبات الـ SDK المتوافقة مع معمارية iOS
+          git clone --quiet https://github.com/theos/sdks.git $HOME/theos/sdks
+          
+          # تعيين مسار THEOS في بيئة العمل
+          echo "THEOS=$HOME/theos" >> $GITHUB_ENV
 
-      - name: 4. استخراج النصوص والرموز والتفكيك البرمجي
+      - name: 4. تجميع وبناء الأداة (Compile & Package)
         run: |
-          echo "=== استخراج الرموز والنصوص ==="
-          # استخراج النصوص والمفاتيح والروابط
-          strings -a hsrider.dylib > output/analysis/strings.txt
+          export THEOS=$HOME/theos
+          
+          # بناء الحزمة النهائية .deb
+          make clean
+          make package FINALPACKAGE=1
 
-          # استخراج جدول الرموز والدوال المصدرة
-          nm -gU hsrider.dylib > output/analysis/symbols.txt
-
-          # استخراج المكتبات المرتبطة
-          otool -L hsrider.dylib > output/analysis/dependencies.txt
-
-          # تفكيك تعليمات التجميع ARM64 (Disassembly)
-          otool -tvV hsrider.dylib > output/analysis/disassembly.asm
-
-      - name: 5. رفع النتائج كـ Artifact
-        if: always()
+      - name: 5. رفع حزمة التثبيت (.deb)
         uses: actions/upload-artifact@v4
         with:
-          name: hsrider-analysis-results
-          path: output/
+          name: CleanRider-DEB
+          path: packages/*.deb
+
+      - name: 6. رفع ملف المكتبة المجمعة (.dylib)
+        uses: actions/upload-artifact@v4
+        with:
+          name: CleanRider-DYLIB
+          path: .theos/obj/debug/*.dylib
