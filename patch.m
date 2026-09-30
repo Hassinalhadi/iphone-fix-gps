@@ -6,10 +6,10 @@
 
 #define SECRET_KEY "MySecretTweakKey2026!#"
 
-// دالة لاستخراج أول 8 خانات فقط من الـ UDID (أرقام وأحرف)
+// --- 1. استخراج معرف الـ 8 خانات وفحص المفتاح ---
+
 static NSString* GetCleanShortID(NSString *fullUDID) {
     if (!fullUDID || fullUDID.length == 0) return @"A1B2C3D4";
-    // إزالة الفواصل والشرطات
     NSString *clean = [[fullUDID stringByReplacingOccurrencesOfString:@"-" withString:@""] uppercaseString];
     if (clean.length >= 8) {
         return [clean substringToIndex:8];
@@ -17,7 +17,6 @@ static NSString* GetCleanShortID(NSString *fullUDID) {
     return clean;
 }
 
-// دالة فحص المفتاح الجديد أوفلاين
 static BOOL VerifyLicense(NSString *licenseKey, NSString *shortID) {
     if (!licenseKey || !shortID) return NO;
     NSArray *parts = [licenseKey componentsSeparatedByString:@"-"];
@@ -27,10 +26,10 @@ static BOOL VerifyLicense(NSString *licenseKey, NSString *shortID) {
     NSString *expiryStr = parts;
     NSString *sig = parts;
     
-    // 1. فحص تطابق معرف الـ 8 خانات
+    // 1. التحقق من تطابق معرف الجهاز المكون من 8 خانات
     if (![keyDevice isEqualToString:[shortID uppercaseString]]) return NO;
     
-    // 2. فحص التوقيع الرقمي لمنع التزوير
+    // 2. التحقق من صحة التوقيع الرقمي
     NSString *payload = [NSString stringWithFormat:@"%@-%@", keyDevice, expiryStr];
     const char *keyBytes = SECRET_KEY;
     const char *dataBytes = [payload UTF8String];
@@ -43,7 +42,7 @@ static BOOL VerifyLicense(NSString *licenseKey, NSString *shortID) {
     }
     if (![[sig uppercaseString] isEqualToString:expectedSig]) return NO;
     
-    // 3. فحص تاريخ الانتهاء
+    // 3. التحقق من تاريخ الصلاحية
     NSDateFormatter *df = [[NSDateFormatter alloc] init];
     [df setDateFormat:@"yyyyMMdd"];
     [df setTimeZone:[NSTimeZone timeZoneForSecondsFromGMT:0]];
@@ -51,59 +50,60 @@ static BOOL VerifyLicense(NSString *licenseKey, NSString *shortID) {
     return (expDate && [expDate compare:[NSDate date]] == NSOrderedDescending);
 }
 
-// دالة لتعديل النصوص من العربية للإنجليزية داخل واجهة الشاشة
+// --- 2. تعريب الواجهة وتعديل النصوص للإنجليزية وإظهار المعرف ---
+
 static void TranslateViewToEnglish(UIView *view, NSString *shortID) {
     if ([view isKindOfClass:[UILabel class]]) {
         UILabel *lbl = (UILabel *)view;
-        NSString *txt = lbl.text;
+        NSString *txt = lbl.text ?: @"";
         if ([txt containsString:@"التفعيل"] || [txt containsString:@"GUFRAN"]) {
             lbl.text = @"GPS Simulator - Activation";
         } else if ([txt containsString:@"يرجى إدخال"] || [txt containsString:@"كود التفعيل"]) {
             lbl.text = @"Please enter your activation code:";
-        } else if ([txt containsString:@"UDID"] || [txt containsString:@"نسخ"]) {
-            lbl.text = [NSString stringWithFormat:@"Device ID: %@ (Copy)", shortID];
         }
     } else if ([view isKindOfClass:[UIButton class]]) {
         UIButton *btn = (UIButton *)view;
-        NSString *title = [btn titleForState:UIControlStateNormal];
+        NSString *title = [btn titleForState:UIControlStateNormal] ?: @"";
         if ([title containsString:@"تحقق"] || [title containsString:@"تفعيل"]) {
             [btn setTitle:@"Verify & Activate" forState:UIControlStateNormal];
-        } else if ([title containsString:@"نسخ"]) {
-            [btn setTitle:@"Copy" forState:UIControlStateNormal];
+        } else if ([title containsString:@"نسخ"] || [title containsString:@"UDID"] || [title containsString:@"Copy"]) {
+            // إظهار المعرف المكون من 8 خانات بوضوح داخل الزر
+            [btn setTitle:[NSString stringWithFormat:@"Device ID: %@ (Copy)", shortID] forState:UIControlStateNormal];
         }
     } else if ([view isKindOfClass:[UITextField class]]) {
         UITextField *tf = (UITextField *)view;
         tf.placeholder = @"XXXX-XXXXXXXX-XXXX";
     }
     
-    // فحص العناصر الفرعية
     for (UIView *sub in view.subviews) {
         TranslateViewToEnglish(sub, shortID);
     }
 }
 
-// --- اعتراض CLSActivationViewController ---
+// --- 3. اعتراض شاشة التفعيل وزر النسخ ---
 
 static void (*orig_CLSActivationVC_viewDidLoad)(id, SEL);
 static void hook_CLSActivationVC_viewDidLoad(UIViewController *self, SEL _cmd) {
     orig_CLSActivationVC_viewDidLoad(self, _cmd);
     
-    // الحصول على الـ UDID المختصر (8 خانات)
-    UILabel *udidLbl = [self valueForKey:@"_udidLabel"];
-    NSString *raw = udidLbl.text ?: @"";
-    // استخراج أول 8 خانات
+    // استخراج أول 8 خانات من المعرف الموجود في الواجهة الأصلية
+    NSString *raw = @"";
+    @try {
+        UILabel *udidLbl = [self valueForKey:@"_udidLabel"];
+        raw = udidLbl.text ?: @"";
+    } @catch (NSException *e) {}
+    
     NSRegularExpression *regex = [NSRegularExpression regularExpressionWithPattern:@"[A-Fa-f0-9]{8}" options:0 error:nil];
     NSTextCheckingResult *match = [regex firstMatchInString:raw options:0 range:NSMakeRange(0, raw.length)];
     NSString *shortID = match ? [raw substringWithRange:match.range] : GetCleanShortID(raw);
     
-    // حفظ الـ Short ID للاستخدام في زر النسخ والتحقق
+    // حفظ المعرف لاستخدامه أثناء النسخ والتحقق
     objc_setAssociatedObject(self, "kShortDeviceID", shortID, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     
-    // تحويل جميع النصوص داخل الواجهة إلى الإنجليزية
+    // ترجمة عناصر الواجهة للإنجليزية وإظهار المعرف
     TranslateViewToEnglish(self.view, shortID);
 }
 
-// اعتراض زر النسخ لنسخ الـ 8 خانات فقط
 static void hook_CLSActivationVC_copyUDID(id self, SEL _cmd) {
     NSString *shortID = objc_getAssociatedObject(self, "kShortDeviceID") ?: @"A1B2C3D4";
     [UIPasteboard generalPasteboard].string = shortID;
@@ -115,14 +115,13 @@ static void hook_CLSActivationVC_copyUDID(id self, SEL _cmd) {
     [self presentViewController:alert animated:YES completion:nil];
 }
 
-// --- اعتراض السيرفر والتحقق من التفعيل ---
+// --- 4. اعتراض التحقق مع السيرفر وتفعيله محلياً ---
 
 static void hook_verifyCodeWithServer(id self, SEL _cmd, NSString *code, NSString *udid, BOOL isBg, void(^completion)(BOOL, NSString*)) {
     NSString *shortID = GetCleanShortID(udid);
     
-    // التحقق من المفتاح أوفلاين
     if (VerifyLicense(code, shortID)) {
-        // تسجيل التفعيل بنجاح
+        // حفظ بيانات التفعيل في إعدادات التطبيق
         [[NSUserDefaults standardUserDefaults] setBool:YES forKey:@"gufran_is_activated"];
         [[NSUserDefaults standardUserDefaults] setObject:code forKey:@"gufran_saved_code"];
         [[NSUserDefaults standardUserDefaults] setObject:udid forKey:@"gufran_locked_udid"];
@@ -138,19 +137,18 @@ static void hook_verifyCodeWithServer(id self, SEL _cmd, NSString *code, NSStrin
     }
 }
 
-// إجبار اللغة الإنجليزية في كامل التطبيق
+// إجبار اللغة الإنجليزية في مدير الإعدادات
 static NSString* hook_language(id self, SEL _cmd) {
     return @"en";
 }
 
-// دالة التهيئة والاعتراض الفوري
+// دالة البدء التلقائي عند تشغيل التطبيق
 __attribute__((constructor))
 static void InitHook() {
-    // ضبط اللغة الإنجليزية في الإعدادات فوراً
     [[NSUserDefaults standardUserDefaults] setObject:@"en" forKey:@"cls_language"];
     [[NSUserDefaults standardUserDefaults] synchronize];
     
-    // 1. اعتراض شاشة التفعيل لتحويلها للإنجليزية وإظهار 8 خانات
+    // اعتراض واجهة التفعيل
     Class actVC = NSClassFromString(@"CLSActivationViewController");
     if (actVC) {
         Method m1 = class_getInstanceMethod(actVC, @selector(viewDidLoad));
@@ -165,7 +163,7 @@ static void InitHook() {
         }
     }
     
-    // 2. اعتراض دالة التحقق من السيرفر القديم
+    // اعتراض دالة التحقق من السيرفر
     Class actMgr = objc_getMetaClass("GUFRANActivationManager");
     if (actMgr) {
         Method mVerify = class_getClassMethod(actMgr, NSSelectorFromString(@"verifyCodeWithServer:udid:isBackground:completion:"));
@@ -174,10 +172,12 @@ static void InitHook() {
         }
     }
     
-    // 3. إجبار اللغة الإنجليزية في كلاس الإدارة
+    // إجبار اللغة الإنجليزية في CLSManager
     Class clsMgr = NSClassFromString(@"CLSManager");
     if (clsMgr) {
         Method mLang = class_getInstanceMethod(clsMgr, NSSelectorFromString(@"language"));
-        if (mLang) method_setImplementation(mLang, (IMP)hook_language);
+        if (mLang) {
+            method_setImplementation(mLang, (IMP)hook_language);
+        }
     }
 }
