@@ -1,0 +1,55 @@
+name: Decompile & Analyze Dylib
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  analyze:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Tools & Environment
+        run: |
+          mkdir -p output
+          brew install dsdump llvm || true
+
+      - name: Extract Mach-O Info & Strings
+        run: |
+          echo "=== File Architecture ===" > output/info.txt
+          file hsrider.dylib >> output/info.txt
+          otool -hv hsrider.dylib >> output/info.txt
+
+          echo "=== Linked Dynamic Libraries ===" > output/dependencies.txt
+          otool -L hsrider.dylib >> output/dependencies.txt
+
+          echo "=== Text Strings ===" > output/strings.txt
+          strings hsrider.dylib >> output/strings.txt
+
+      - name: Dump Objective-C Headers & Classes
+        run: |
+          # استخراج كلاسات وميثودات Objective-C
+          if command -v dsdump &> /dev/null; then
+            dsdump --objc --verbose hsrider.dylib > output/objc_classes.h || true
+          fi
+          
+          # استخراج معلومات الأقسام والبروتوكولات
+          otool -ov hsrider.dylib > output/objc_runtime_structures.txt
+
+      - name: Disassemble ARM64 Text Section
+        run: |
+          # استخراج كود الأسمبلي المفكك
+          llvm-objdump -d --macho --objc-meta-data hsrider.dylib > output/disassembly.asm
+          
+          # استخراج جدول الرموز (Symbols)
+          nm -gU hsrider.dylib > output/symbols.txt || true
+
+      - name: Upload Analysis Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dylib-decompiled-analysis
+          path: output/
