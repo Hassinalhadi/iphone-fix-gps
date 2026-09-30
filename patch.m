@@ -13,9 +13,9 @@ static BOOL VerifyLicense(NSString *licenseKey, NSString *expectedID) {
     NSArray *parts = [licenseKey componentsSeparatedByString:@"-"];
     if (parts.count != 3) return NO;
     
-    NSString *keyDevice = [parts[0] uppercaseString];
-    NSString *expiryStr = parts;
-    NSString *sig = [parts uppercaseString];
+    NSString *keyDevice = [[parts objectAtIndex:0] uppercaseString];
+    NSString *expiryStr = [parts objectAtIndex:1];
+    NSString *sig = [[parts objectAtIndex:2] uppercaseString];
     
     // فحص تطابق معرف الجهاز
     if (![keyDevice isEqualToString:[expectedID uppercaseString]]) return NO;
@@ -96,7 +96,6 @@ static void hook_CLSActivationVC_copyUDID(id self, SEL _cmd) {
 static void hook_CLSActivationVC_activateTapped(UIViewController *self, SEL _cmd) {
     [self.view endEditing:YES];
     
-    // استخراج حقل النص
     UITextField *field = nil;
     for (UIView *v in self.view.subviews) {
         if ([v isKindOfClass:[UITextField class]]) {
@@ -115,17 +114,17 @@ static void hook_CLSActivationVC_activateTapped(UIViewController *self, SEL _cmd
     
     // فحص المفتاح الجديد أوفلاين
     if (VerifyLicense(inputKey, @"A1B2C3D4") || VerifyLicense(inputKey, @"DC249A18")) {
-        // تسجيل النجاح في إعدادات التطبيق
         [[NSUserDefaults standardUserDefaults] setBool:YES forKey:@"gufran_is_activated"];
         [[NSUserDefaults standardUserDefaults] setObject:inputKey forKey:@"gufran_saved_code"];
         [[NSUserDefaults standardUserDefaults] setObject:[NSDate dateWithTimeIntervalSinceNow:315360000] forKey:@"gufran_expires_at"];
         [[NSUserDefaults standardUserDefaults] synchronize];
         
+        UIViewController *currentVC = self;
         UIAlertController *success = [UIAlertController alertControllerWithTitle:@"Success"
                                                                          message:@"Activated successfully!"
                                                                   preferredStyle:UIAlertControllerStyleAlert];
         [success addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
-            [self dismissViewControllerAnimated:YES completion:nil];
+            [currentVC dismissViewControllerAnimated:YES completion:nil];
         }]];
         [self presentViewController:success animated:YES completion:nil];
     } else {
@@ -137,16 +136,14 @@ static void hook_CLSActivationVC_activateTapped(UIViewController *self, SEL _cmd
     }
 }
 
-// إجبار التطبيق على اللغة الإنجليزية
 static NSString* hook_language(id self, SEL _cmd) {
     return @"en";
 }
 
-// تعطيل التحقق القديم عند فتح التطبيق إذا كان مفعلاً
 static void hook_enforceActivation(id self, SEL _cmd) {
     BOOL isAct = [[NSUserDefaults standardUserDefaults] boolForKey:@"gufran_is_activated"];
     if (isAct) {
-        return; // لا تظهر الشاشة طالما تم التفعيل بنجاح
+        return;
     }
 }
 
@@ -158,27 +155,23 @@ static void InitHook() {
     
     Class actVC = NSClassFromString(@"CLSActivationViewController");
     if (actVC) {
-        // اعتراض الشاشة
         Method m1 = class_getInstanceMethod(actVC, @selector(viewDidLoad));
         if (m1) {
             orig_CLSActivationVC_viewDidLoad = (void(*)(id, SEL))method_getImplementation(m1);
             method_setImplementation(m1, (IMP)hook_CLSActivationVC_viewDidLoad);
         }
         
-        // اعتراض زر النسخ
         Method mCopy = class_getInstanceMethod(actVC, NSSelectorFromString(@"copyUDID"));
         if (mCopy) {
             method_setImplementation(mCopy, (IMP)hook_CLSActivationVC_copyUDID);
         }
         
-        // اعتراض زر التفعيل مباشرة لمنع الاتصال بالسيرفر
         Method mAct = class_getInstanceMethod(actVC, NSSelectorFromString(@"activateTapped"));
         if (mAct) {
             method_setImplementation(mAct, (IMP)hook_CLSActivationVC_activateTapped);
         }
     }
     
-    // منع السيرفر القديم من تكرار إظهار القفل
     Class actMgr = objc_getClass("GUFRANActivationManager");
     if (actMgr) {
         Method mEnforce = class_getClassMethod(actMgr, NSSelectorFromString(@"enforceActivation"));
@@ -187,7 +180,6 @@ static void InitHook() {
         }
     }
     
-    // إجبار اللغة الإنجليزية
     Class clsMgr = NSClassFromString(@"CLSManager");
     if (clsMgr) {
         Method mLang = class_getInstanceMethod(clsMgr, NSSelectorFromString(@"language"));
