@@ -10,23 +10,23 @@ jobs:
     runs-on: macos-latest
 
     steps:
-      # 1. جلب ملفات مشروعك (Makefile, control, Tweak.x)
+      # 1. جلب ملفات المشروع
       - name: Checkout Repository
         uses: actions/checkout@v4
         with:
           submodules: true
 
-      # 2. تثبيت Theos والـ iOS SDKs تلقائياً وبشكل مضمون
+      # 2. إعداد وتثبيت بيئة Theos والـ iOS SDKs تلقائياً
       - name: Setup Theos Environment
         uses: Randomblock1/theos-action@v1
 
-      # 3. بناء وتجميع الأداة
+      # 3. تجميع وبناء الحزمة مع إظهار تفاصيل الترجمة (Verbose)
       - name: Compile & Package Tweak
         run: |
           make clean
-          make package FINALPACKAGE=1
+          make package FINALPACKAGE=1 messages=yes
 
-      # 4. رفع حزمة .deb الناتجة
+      # 4. رفع حزمة التثبيت (.deb)
       - name: Upload .deb Package
         if: always()
         uses: actions/upload-artifact@v4
@@ -34,7 +34,7 @@ jobs:
           name: CleanRider-DEB
           path: packages/*.deb
 
-      # 5. رفع ملف المكتبة .dylib الناتجة
+      # 5. رفع ملف المكتبة المجمعة (.dylib)
       - name: Upload .dylib File
         if: always()
         uses: actions/upload-artifact@v4
