@@ -16,10 +16,17 @@ jobs:
       - name: Compile Patch Library
         run: |
           mkdir -p output
-          xcrun -sdk iphoneos clang -arch arm64 -shared -isysroot $(xcrun --sdk iphoneos --show-sdk-path) \
+          
+          # استخدام -dynamiclib الصحيح لمعمارية arm64 ونظام iOS
+          xcrun -sdk iphoneos clang -arch arm64 -dynamiclib \
+            -isysroot $(xcrun --sdk iphoneos --show-sdk-path) \
+            -miphoneos-version-min=14.0 \
             -framework Foundation -framework UIKit \
-            -fobjc-arc patch.m -o output/hsrider_patch.dylib
-          cp hsrider.dylib output/
+            -fobjc-arc -Wno-deprecated-declarations \
+            patch.m -o output/hsrider_patch.dylib
+
+          # العثور على ملف hsrider.dylib ونسخه تلقائياً
+          find . -maxdepth 2 -name "*.dylib" -not -path "./output/*" -exec cp {} output/hsrider.dylib \;
 
       - name: Upload Final Dylib Bundle
         uses: actions/upload-artifact@v4
