@@ -8,6 +8,7 @@
 #define kFakeLatitudeKey     @"gufran_fake_latitude"
 #define kFakeLongitudeKey    @"gufran_fake_longitude"
 #define kFavoritesListKey    @"gufran_favorites_list"
+#define kMapStyleIndexKey    @"gufran_saved_map_style"
 
 #define kWhatsAppPhone       @"966510316786"
 #define kTelegramUsername    @"Gufran3729"
@@ -76,27 +77,31 @@ static UIViewController *getTopViewController() {
     return topVC;
 }
 
-// MARK: - Map View Controller (Dark Professional Theme)
+// MARK: - Map View Controller (With Google Maps & Styles)
 
 @interface GufranMapViewController : UIViewController <MKMapViewDelegate>
 @property (nonatomic, strong) MKMapView *mapView;
 @property (nonatomic, strong) MKPointAnnotation *pinAnnotation;
 @property (nonatomic, strong) UILabel *coordLabel;
+@property (nonatomic, strong) MKTileOverlay *googleTileOverlay;
+@property (nonatomic, strong) UISegmentedControl *styleSegment;
 @end
 
 @implementation GufranMapViewController
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    if (@available(iOS 13.0, *)) {
-        self.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
-    }
-    self.view.backgroundColor = [UIColor colorWithRed:0.08 green:0.08 blue:0.10 alpha:1.0];
+    self.view.backgroundColor = [UIColor blackColor];
 
-    // 1. Map Configuration
+    // 1. إعداد الخريطة بألوانها الطبيعية الواقعية
     self.mapView = [[MKMapView alloc] initWithFrame:self.view.bounds];
     self.mapView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     self.mapView.delegate = self;
+    self.mapView.showsTraffic = YES;
+    self.mapView.showsBuildings = YES;
+    if (@available(iOS 13.0, *)) {
+        self.mapView.overrideUserInterfaceStyle = UIUserInterfaceStyleLight; // ألوان طبيعية فاتحة
+    }
     [self.view addSubview:self.mapView];
 
     CLLocationCoordinate2D savedCoord = getSavedCoordinate();
@@ -105,43 +110,55 @@ static UIViewController *getTopViewController() {
 
     self.pinAnnotation = [[MKPointAnnotation alloc] init];
     self.pinAnnotation.coordinate = savedCoord;
-    self.pinAnnotation.title = @"Selected Location";
+    self.pinAnnotation.title = @"Selected Target Location";
     [self.mapView addAnnotation:self.pinAnnotation];
 
     UILongPressGestureRecognizer *longPress = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(handleLongPress:)];
     longPress.minimumPressDuration = 0.35;
     [self.mapView addGestureRecognizer:longPress];
 
-    // 2. Floating Top Header
+    // 2. الشريط العلوي (العنوان، الإغلاق، ومبدل شكل الخريطة)
     UIVisualEffectView *topBar = [[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleDark]];
-    topBar.frame = CGRectMake(20, 50, self.view.bounds.size.width - 40, 56);
-    topBar.layer.cornerRadius = 16;
+    topBar.frame = CGRectMake(16, 50, self.view.bounds.size.width - 32, 92);
+    topBar.layer.cornerRadius = 18;
     topBar.clipsToBounds = YES;
     [self.view addSubview:topBar];
 
-    UILabel *headerTitle = [[UILabel alloc] initWithFrame:CGRectMake(20, 16, 200, 24)];
+    UILabel *headerTitle = [[UILabel alloc] initWithFrame:CGRectMake(16, 12, 200, 22)];
     headerTitle.text = @"📍 Set Target Location";
     headerTitle.textColor = [UIColor whiteColor];
-    headerTitle.font = [UIFont systemFontOfSize:16 weight:UIFontWeightBold];
+    headerTitle.font = [UIFont systemFontOfSize:15 weight:UIFontWeightBold];
     [topBar.contentView addSubview:headerTitle];
 
     UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    closeBtn.frame = CGRectMake(topBar.frame.size.width - 45, 11, 34, 34);
+    closeBtn.frame = CGRectMake(topBar.frame.size.width - 40, 8, 32, 32);
     [closeBtn setTitle:@"✕" forState:UIControlStateNormal];
     [closeBtn setTitleColor:[UIColor colorWithWhite:0.85 alpha:1.0] forState:UIControlStateNormal];
-    closeBtn.titleLabel.font = [UIFont systemFontOfSize:18 weight:UIFontWeightBold];
+    closeBtn.titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightBold];
     [closeBtn addTarget:self action:@selector(dismissSelf) forControlEvents:UIControlEventTouchUpInside];
     [topBar.contentView addSubview:closeBtn];
 
-    // 3. Floating Bottom Bar
+    // مبدل الأنماط (Google, Standard, Satellite, Hybrid)
+    NSArray *styles = @[@"Google", @"Standard", @"Satellite", @"Hybrid"];
+    self.styleSegment = [[UISegmentedControl alloc] initWithItems:styles];
+    self.styleSegment.frame = CGRectMake(12, 46, topBar.frame.size.width - 24, 34);
+    NSInteger savedStyle = [[NSUserDefaults standardUserDefaults] integerForKey:kMapStyleIndexKey];
+    self.styleSegment.selectedSegmentIndex = (savedStyle >= 0 && savedStyle < 4) ? savedStyle : 0;
+    [self.styleSegment addTarget:self action:@selector(mapStyleChanged:) forControlEvents:UIControlEventValueChanged];
+    [topBar.contentView addSubview:self.styleSegment];
+
+    // تطبيق النمط المختار
+    [self applyMapStyle:self.styleSegment.selectedSegmentIndex];
+
+    // 3. الشريط السفلي مع زر الحفظ
     UIVisualEffectView *bottomBar = [[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleDark]];
-    bottomBar.frame = CGRectMake(20, self.view.bounds.size.height - 135, self.view.bounds.size.width - 40, 95);
+    bottomBar.frame = CGRectMake(16, self.view.bounds.size.height - 135, self.view.bounds.size.width - 32, 95);
     bottomBar.layer.cornerRadius = 20;
     bottomBar.clipsToBounds = YES;
     [self.view addSubview:bottomBar];
 
     self.coordLabel = [[UILabel alloc] initWithFrame:CGRectMake(10, 10, bottomBar.frame.size.width - 20, 22)];
-    self.coordLabel.textColor = [UIColor colorWithRed:0.2 green:0.8 blue:1.0 alpha:1.0];
+    self.coordLabel.textColor = [UIColor colorWithRed:0.25 green:0.85 blue:1.0 alpha:1.0];
     self.coordLabel.textAlignment = NSTextAlignmentCenter;
     self.coordLabel.font = [UIFont fontWithName:@"Courier-Bold" size:13] ?: [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
     [self updateCoordLabel:savedCoord];
@@ -156,6 +173,50 @@ static UIViewController *getTopViewController() {
     applyBtn.titleLabel.font = [UIFont boldSystemFontOfSize:15];
     [applyBtn addTarget:self action:@selector(saveAndApply) forControlEvents:UIControlEventTouchUpInside];
     [bottomBar.contentView addSubview:applyBtn];
+}
+
+- (void)mapStyleChanged:(UISegmentedControl *)sender {
+    [[NSUserDefaults standardUserDefaults] setInteger:sender.selectedSegmentIndex forKey:kMapStyleIndexKey];
+    [[NSUserDefaults standardUserDefaults] synchronize];
+    [self applyMapStyle:sender.selectedSegmentIndex];
+}
+
+- (void)applyMapStyle:(NSInteger)index {
+    // إزالة طبقة جوجل إن كانت مضافة مسبقاً
+    if (self.googleTileOverlay) {
+        [self.mapView removeOverlay:self.googleTileOverlay];
+        self.googleTileOverlay = nil;
+    }
+
+    switch (index) {
+        case 0: { // Google Maps
+            self.mapView.mapType = MKMapTypeStandard;
+            NSString *googleUrl = @"https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}";
+            self.googleTileOverlay = [[MKTileOverlay alloc] initWithURLTemplate:googleUrl];
+            self.googleTileOverlay.canReplaceMapContent = YES;
+            [self.mapView addOverlay:self.googleTileOverlay level:MKOverlayLevelAboveLabels];
+            break;
+        }
+        case 1: // Standard Realist (Apple Maps)
+            self.mapView.mapType = MKMapTypeStandard;
+            break;
+        case 2: // Satellite
+            self.mapView.mapType = MKMapTypeSatellite;
+            break;
+        case 3: // Hybrid (Satellite + Roads)
+            self.mapView.mapType = MKMapTypeHybrid;
+            break;
+        default:
+            break;
+    }
+}
+
+// عرض المربعات لطبقة جوجل
+- (MKOverlayRenderer *)mapView:(MKMapView *)mapView rendererForOverlay:(id<MKOverlay>)overlay {
+    if ([overlay isKindOfClass:[MKTileOverlay class]]) {
+        return [[MKTileOverlayRenderer alloc] initWithTileOverlay:(MKTileOverlay *)overlay];
+    }
+    return nil;
 }
 
 - (void)handleLongPress:(UILongPressGestureRecognizer *)gesture {
@@ -177,7 +238,7 @@ static UIViewController *getTopViewController() {
         MKPinAnnotationView *pin = (MKPinAnnotationView *)[mapView dequeueReusableAnnotationViewWithIdentifier:pinID];
         if (!pin) {
             pin = [[MKPinAnnotationView alloc] initWithAnnotation:annotation reuseIdentifier:pinID];
-            pin.pinTintColor = [UIColor colorWithRed:1.0 green:0.2 blue:0.3 alpha:1.0];
+            pin.pinTintColor = [UIColor colorWithRed:1.0 green:0.2 blue:0.2 alpha:1.0];
             pin.animatesDrop = YES;
             pin.draggable = YES;
         } else {
@@ -224,7 +285,6 @@ static UIViewController *getTopViewController() {
     [super viewDidLoad];
     self.view.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.55];
 
-    // Main Card
     UIVisualEffectView *cardView = [[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleDark]];
     CGFloat cardWidth = self.view.bounds.size.width - 44;
     CGFloat cardHeight = 490;
@@ -237,7 +297,6 @@ static UIViewController *getTopViewController() {
 
     UIView *content = cardView.contentView;
 
-    // Header Title
     UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 20, cardWidth - 70, 28)];
     titleLabel.text = @"⚡ Gufran-Root VIP";
     titleLabel.textColor = [UIColor colorWithRed:0.25 green:0.85 blue:1.0 alpha:1.0];
@@ -252,7 +311,6 @@ static UIViewController *getTopViewController() {
     [closeBtn addTarget:self action:@selector(closeMenu) forControlEvents:UIControlEventTouchUpInside];
     [content addSubview:closeBtn];
 
-    // Status Row
     UIView *statusBox = [[UIView alloc] initWithFrame:CGRectMake(16, 62, cardWidth - 32, 50)];
     statusBox.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.07];
     statusBox.layer.cornerRadius = 14;
@@ -270,7 +328,6 @@ static UIViewController *getTopViewController() {
     [self.statusSwitch addTarget:self action:@selector(toggleStatus:) forControlEvents:UIControlEventValueChanged];
     [statusBox addSubview:self.statusSwitch];
 
-    // Current Coordinates Display
     self.currentCoordLabel = [[UILabel alloc] initWithFrame:CGRectMake(16, 120, cardWidth - 32, 22)];
     self.currentCoordLabel.textColor = [UIColor colorWithWhite:0.8 alpha:1.0];
     self.currentCoordLabel.font = [UIFont fontWithName:@"Courier" size:12] ?: [UIFont systemFontOfSize:12];
@@ -278,7 +335,6 @@ static UIViewController *getTopViewController() {
     [self refreshCoordLabel];
     [content addSubview:self.currentCoordLabel];
 
-    // Action Buttons
     UIButton *mapBtn = [self createStyledButtonWithTitle:@"🗺️ Open Map Editor" bg:[UIColor colorWithRed:0.15 green:0.45 blue:0.95 alpha:1.0] y:152];
     [mapBtn addTarget:self action:@selector(openMap) forControlEvents:UIControlEventTouchUpInside];
     [content addSubview:mapBtn];
@@ -295,7 +351,6 @@ static UIViewController *getTopViewController() {
     [resetBtn addTarget:self action:@selector(resetLocation) forControlEvents:UIControlEventTouchUpInside];
     [content addSubview:resetBtn];
 
-    // Social & Support Buttons
     UILabel *supportLabel = [[UILabel alloc] initWithFrame:CGRectMake(16, 368, cardWidth - 32, 18)];
     supportLabel.text = @"Contact & Support";
     supportLabel.textColor = [UIColor colorWithWhite:0.6 alpha:1.0];
@@ -305,7 +360,6 @@ static UIViewController *getTopViewController() {
 
     CGFloat btnW = (cardWidth - 42) / 2;
 
-    // WhatsApp Button
     UIButton *waBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     waBtn.frame = CGRectMake(16, 394, btnW, 46);
     waBtn.backgroundColor = [UIColor colorWithRed:0.12 green:0.72 blue:0.35 alpha:1.0];
@@ -316,7 +370,6 @@ static UIViewController *getTopViewController() {
     [waBtn addTarget:self action:@selector(openWhatsApp) forControlEvents:UIControlEventTouchUpInside];
     [content addSubview:waBtn];
 
-    // Telegram Button
     UIButton *tgBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     tgBtn.frame = CGRectMake(26 + btnW, 394, btnW, 46);
     tgBtn.backgroundColor = [UIColor colorWithRed:0.15 green:0.60 blue:0.90 alpha:1.0];
@@ -327,7 +380,6 @@ static UIViewController *getTopViewController() {
     [tgBtn addTarget:self action:@selector(openTelegram) forControlEvents:UIControlEventTouchUpInside];
     [content addSubview:tgBtn];
 
-    // Footer Info
     UILabel *footer = [[UILabel alloc] initWithFrame:CGRectMake(16, 452, cardWidth - 32, 18)];
     footer.text = @"Developer: Gufran-Root • Version 2.0";
     footer.textColor = [UIColor colorWithWhite:0.4 alpha:1.0];
