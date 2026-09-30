@@ -7,6 +7,8 @@
         <key>Bundles</key>
         <array>
             <string>com.logistics.rider.hungerstation</string>
+            <string>com.hungerstation.rider</string>
+            <string>com.hungerstation.driver</string>
         </array>
     </dict>
 </dict>
