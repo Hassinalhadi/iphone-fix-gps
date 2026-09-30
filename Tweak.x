@@ -77,7 +77,58 @@ static UIViewController *getTopViewController() {
     return topVC;
 }
 
-// MARK: - Map View Controller (With Google Maps & Styles)
+// MARK: - Custom Prominent Pin (دبوس كبير وواضح ومميز)
+
+@interface GufranCustomPinView : MKAnnotationView
+@end
+
+@implementation GufranCustomPinView
+
+- (instancetype)initWithAnnotation:(id<MKAnnotation>)annotation reuseIdentifier:(NSString *)reuseIdentifier {
+    self = [super initWithAnnotation:annotation reuseIdentifier:reuseIdentifier];
+    if (self) {
+        self.frame = CGRectMake(0, 0, 48, 56);
+        self.centerOffset = CGPointMake(0, -26); // يضمن أن رأس السهم يرتكز على الإحداثي الفعلي
+        self.draggable = YES;
+        self.canShowCallout = YES;
+        self.backgroundColor = [UIColor clearColor];
+
+        // 1. سهم المؤشر السفلي
+        CAShapeLayer *pointer = [CAShapeLayer layer];
+        UIBezierPath *path = [UIBezierPath bezierPath];
+        [path moveToPoint:CGPointMake(18, 38)];
+        [path addLineToPoint:CGPointMake(24, 52)];
+        [path addLineToPoint:CGPointMake(30, 38)];
+        [path closePath];
+        pointer.path = path.CGPath;
+        pointer.fillColor = [UIColor colorWithRed:0.95 green:0.12 blue:0.20 alpha:1.0].CGColor;
+        [self.layer addSublayer:pointer];
+
+        // 2. الرأس الدائري البارز مع الإطار الأبيض والظل
+        UIView *pinBody = [[UIView alloc] initWithFrame:CGRectMake(4, 2, 40, 40)];
+        pinBody.backgroundColor = [UIColor colorWithRed:0.95 green:0.12 blue:0.20 alpha:1.0];
+        pinBody.layer.cornerRadius = 20;
+        pinBody.layer.borderWidth = 3.0;
+        pinBody.layer.borderColor = [UIColor whiteColor].CGColor;
+        pinBody.layer.shadowColor = [UIColor blackColor].CGColor;
+        pinBody.layer.shadowOpacity = 0.55;
+        pinBody.layer.shadowOffset = CGSizeMake(0, 3);
+        pinBody.layer.shadowRadius = 4.5;
+
+        // 3. أيقونة الدبوس الداخلية
+        UILabel *iconLabel = [[UILabel alloc] initWithFrame:pinBody.bounds];
+        iconLabel.text = @"📍";
+        iconLabel.font = [UIFont systemFontOfSize:22];
+        iconLabel.textAlignment = NSTextAlignmentCenter;
+        [pinBody addSubview:iconLabel];
+        [self addSubview:pinBody];
+    }
+    return self;
+}
+
+@end
+
+// MARK: - Map View Controller
 
 @interface GufranMapViewController : UIViewController <MKMapViewDelegate>
 @property (nonatomic, strong) MKMapView *mapView;
@@ -93,14 +144,13 @@ static UIViewController *getTopViewController() {
     [super viewDidLoad];
     self.view.backgroundColor = [UIColor blackColor];
 
-    // 1. إعداد الخريطة بألوانها الطبيعية الواقعية
     self.mapView = [[MKMapView alloc] initWithFrame:self.view.bounds];
     self.mapView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     self.mapView.delegate = self;
     self.mapView.showsTraffic = YES;
     self.mapView.showsBuildings = YES;
     if (@available(iOS 13.0, *)) {
-        self.mapView.overrideUserInterfaceStyle = UIUserInterfaceStyleLight; // ألوان طبيعية فاتحة
+        self.mapView.overrideUserInterfaceStyle = UIUserInterfaceStyleLight;
     }
     [self.view addSubview:self.mapView];
 
@@ -117,7 +167,7 @@ static UIViewController *getTopViewController() {
     longPress.minimumPressDuration = 0.35;
     [self.mapView addGestureRecognizer:longPress];
 
-    // 2. الشريط العلوي (العنوان، الإغلاق، ومبدل شكل الخريطة)
+    // الشريط العلوي
     UIVisualEffectView *topBar = [[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleDark]];
     topBar.frame = CGRectMake(16, 50, self.view.bounds.size.width - 32, 92);
     topBar.layer.cornerRadius = 18;
@@ -138,7 +188,6 @@ static UIViewController *getTopViewController() {
     [closeBtn addTarget:self action:@selector(dismissSelf) forControlEvents:UIControlEventTouchUpInside];
     [topBar.contentView addSubview:closeBtn];
 
-    // مبدل الأنماط (Google, Standard, Satellite, Hybrid)
     NSArray *styles = @[@"Google", @"Standard", @"Satellite", @"Hybrid"];
     self.styleSegment = [[UISegmentedControl alloc] initWithItems:styles];
     self.styleSegment.frame = CGRectMake(12, 46, topBar.frame.size.width - 24, 34);
@@ -147,10 +196,9 @@ static UIViewController *getTopViewController() {
     [self.styleSegment addTarget:self action:@selector(mapStyleChanged:) forControlEvents:UIControlEventValueChanged];
     [topBar.contentView addSubview:self.styleSegment];
 
-    // تطبيق النمط المختار
     [self applyMapStyle:self.styleSegment.selectedSegmentIndex];
 
-    // 3. الشريط السفلي مع زر الحفظ
+    // الشريط السفلي
     UIVisualEffectView *bottomBar = [[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleDark]];
     bottomBar.frame = CGRectMake(16, self.view.bounds.size.height - 135, self.view.bounds.size.width - 32, 95);
     bottomBar.layer.cornerRadius = 20;
@@ -182,7 +230,6 @@ static UIViewController *getTopViewController() {
 }
 
 - (void)applyMapStyle:(NSInteger)index {
-    // إزالة طبقة جوجل إن كانت مضافة مسبقاً
     if (self.googleTileOverlay) {
         [self.mapView removeOverlay:self.googleTileOverlay];
         self.googleTileOverlay = nil;
@@ -197,13 +244,13 @@ static UIViewController *getTopViewController() {
             [self.mapView addOverlay:self.googleTileOverlay level:MKOverlayLevelAboveLabels];
             break;
         }
-        case 1: // Standard Realist (Apple Maps)
+        case 1:
             self.mapView.mapType = MKMapTypeStandard;
             break;
-        case 2: // Satellite
+        case 2:
             self.mapView.mapType = MKMapTypeSatellite;
             break;
-        case 3: // Hybrid (Satellite + Roads)
+        case 3:
             self.mapView.mapType = MKMapTypeHybrid;
             break;
         default:
@@ -211,7 +258,6 @@ static UIViewController *getTopViewController() {
     }
 }
 
-// عرض المربعات لطبقة جوجل
 - (MKOverlayRenderer *)mapView:(MKMapView *)mapView rendererForOverlay:(id<MKOverlay>)overlay {
     if ([overlay isKindOfClass:[MKTileOverlay class]]) {
         return [[MKTileOverlayRenderer alloc] initWithTileOverlay:(MKTileOverlay *)overlay];
@@ -232,25 +278,23 @@ static UIViewController *getTopViewController() {
     self.coordLabel.text = [NSString stringWithFormat:@"Lat: %.5f | Lon: %.5f", coord.latitude, coord.longitude];
 }
 
+// استخدام الدبوس الجديد البارز
 - (MKAnnotationView *)mapView:(MKMapView *)mapView viewForAnnotation:(id<MKAnnotation>)annotation {
     if ([annotation isKindOfClass:[MKPointAnnotation class]]) {
-        static NSString *pinID = @"GufranPin";
-        MKPinAnnotationView *pin = (MKPinAnnotationView *)[mapView dequeueReusableAnnotationViewWithIdentifier:pinID];
-        if (!pin) {
-            pin = [[MKPinAnnotationView alloc] initWithAnnotation:annotation reuseIdentifier:pinID];
-            pin.pinTintColor = [UIColor colorWithRed:1.0 green:0.2 blue:0.2 alpha:1.0];
-            pin.animatesDrop = YES;
-            pin.draggable = YES;
+        static NSString *customPinID = @"GufranCustomPin";
+        GufranCustomPinView *pinView = (GufranCustomPinView *)[mapView dequeueReusableAnnotationViewWithIdentifier:customPinID];
+        if (!pinView) {
+            pinView = [[GufranCustomPinView alloc] initWithAnnotation:annotation reuseIdentifier:customPinID];
         } else {
-            pin.annotation = annotation;
+            pinView.annotation = annotation;
         }
-        return pin;
+        return pinView;
     }
     return nil;
 }
 
 - (void)mapView:(MKMapView *)mapView annotationView:(MKAnnotationView *)view didChangeDragState:(MKAnnotationViewDragState)newState fromOldState:(MKAnnotationViewDragState)oldState {
-    if (newState == MKAnnotationViewDragStateEnding) {
+    if (newState == MKAnnotationViewDragStateEnding || newState == MKAnnotationViewDragStateNone) {
         [self updateCoordLabel:view.annotation.coordinate];
     }
 }
