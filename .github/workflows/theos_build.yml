@@ -20,31 +20,35 @@ jobs:
 
       - name: 3. تثبيت بيئة Theos والـ iOS SDKs
         run: |
-          # استنساخ Theos
+          # 1. استنساخ Theos
           git clone --recursive https://github.com/theos/theos.git $HOME/theos
           
-          # جلب مكتبات الـ SDK المتوافقة مع معمارية iOS
-          git clone --quiet https://github.com/theos/sdks.git $HOME/theos/sdks
+          # 2. جلب الـ SDKs إلى مجلد مؤقت ثم نسخها لمجلد Theos
+          git clone --depth 1 https://github.com/theos/sdks.git /tmp/theos-sdks
+          cp -r /tmp/theos-sdks/*.sdk $HOME/theos/sdks/
+          rm -rf /tmp/theos-sdks
           
-          # تعيين مسار THEOS في بيئة العمل
+          # 3. تعيين المتغير في بيئة GitHub
           echo "THEOS=$HOME/theos" >> $GITHUB_ENV
 
       - name: 4. تجميع وبناء الأداة (Compile & Package)
         run: |
           export THEOS=$HOME/theos
           
-          # بناء الحزمة النهائية .deb
+          # تنظيف وبناء الحزمة
           make clean
           make package FINALPACKAGE=1
 
       - name: 5. رفع حزمة التثبيت (.deb)
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: CleanRider-DEB
           path: packages/*.deb
 
       - name: 6. رفع ملف المكتبة المجمعة (.dylib)
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: CleanRider-DYLIB
-          path: .theos/obj/debug/*.dylib
+          path: .theos/obj*/**/*.dylib
