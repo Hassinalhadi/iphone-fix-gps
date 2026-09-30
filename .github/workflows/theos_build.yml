@@ -10,7 +10,7 @@ jobs:
     runs-on: macos-latest
 
     steps:
-      - name: 1. جلب ملفات المستودع
+      - name: 1. جلب الكود من المستودع
         uses: actions/checkout@v4
 
       - name: 2. تجهيز مجلدات المخرجات
@@ -18,41 +18,62 @@ jobs:
           mkdir -p output/headers
           mkdir -p output/analysis
 
-      - name: 3. تحميل أداة dsdump لمعمارية ARM64
+      - name: 3. استخراج بيانات Objective-C والترويسات
         run: |
-          # تحميل أداة dsdump الحديثة المخصصة لاستخراج كلاسات Objective-C
-          curl -sL "https://github.com/DerekSelander/dsdump/releases/download/v0.1.1/dsdump_macOS.zip" -o dsdump.zip
-          unzip -q dsdump.zip
-          chmod +x dsdump
-          sudo mv dsdump /usr/local/bin/ || mv dsdump .
+          echo "=== جاري فحص واستخراج كلاسات Objective-C ==="
+          # استخراج البنية الكاملة للكلاسات والدوال عبر أداة Apple الرسمية
+          otool -ov hsrider.dylib > output/headers/objc_raw_metadata.txt
 
-      - name: 4. استخراج الترويسات (Headers) وهيكل الكلاسات
-        run: |
-          DSDUMP_BIN=$(which dsdump 2>/dev/null || echo "./dsdump")
-          
-          # استخراج الواجهات الكاملة Objective-C
-          $DSDUMP_BIN --objc -u hsrider.dylib > output/headers/AllClasses.h || true
-          
-          # استخراج البروتوكولات والـ Symbols بالتفصيل
-          $DSDUMP_BIN -a -u hsrider.dylib > output/headers/FullSymbolsDump.txt || true
+          # تحويل بيانات otool إلى ترويسات Objective-C (.h) مقروءة عبر بايثون
+          python3 - << 'EOF'
+          import re
 
-      - name: 5. استخراج النصوص، الرموز، والتفكيك (Disassembly)
+          with open("output/headers/objc_raw_metadata.txt", "r") as f:
+              content = f.read()
+
+          classes = re.findall(r'Meta Class\s+0x[0-9a-f]+\s+([^\n]+).*?Instance Methods\s+.*?(?=\n\w|\Z)', content, re.DOTALL)
+          
+          with open("output/headers/ExtractedClasses.h", "w") as out:
+              out.write("// Auto-extracted Objective-C interfaces from hsrider.dylib\n\n")
+              
+              current_class = None
+              for line in content.splitlines():
+                  cls_match = re.search(r'^\s*name\s+0x[0-9a-f]+\s+([A-Za-z0-9_]+)', line)
+                  meth_match = re.search(r'^\s*name\s+0x[0-9a-f]+\s+([A-Za-z0-9_:]+)\s*$', line)
+                  type_match = re.search(r'^\s*types\s+0x[0-9a-f]+\s+([^\n]+)', line)
+                  
+                  if cls_match:
+                      cname = cls_match.group(1)
+                      if cname != current_class and not cname.startswith("v@") and not cname.startswith("@"):
+                          current_class = cname
+                          out.write(f"\n@interface {current_class} : NSObject\n")
+                  elif meth_match and current_class:
+                      mname = meth_match.group(1)
+                      if not mname.startswith("0x"):
+                          out.write(f"- (void){mname};\n")
+                  elif "baseMethods" in line and current_class:
+                      pass
+              out.write("\n@end\n")
+          EOF
+
+      - name: 4. استخراج النصوص والرموز والتفكيك البرمجي
         run: |
-          # استخراج كافة النصوص المضمنة (روابط، رسائل، متغيرات)
+          echo "=== استخراج الرموز والنصوص ==="
+          # استخراج النصوص والمفاتيح والروابط
           strings -a hsrider.dylib > output/analysis/strings.txt
-          
-          # استخراج جدول الرموز
+
+          # استخراج جدول الرموز والدوال المصدرة
           nm -gU hsrider.dylib > output/analysis/symbols.txt
-          
-          # استخراج المكتبات المترابطة
-          otool -L hsrider.dylib > output/analysis/linked_libraries.txt
-          
-          # تفكيك تعليمات التجميع ARM64
+
+          # استخراج المكتبات المرتبطة
+          otool -L hsrider.dylib > output/analysis/dependencies.txt
+
+          # تفكيك تعليمات التجميع ARM64 (Disassembly)
           otool -tvV hsrider.dylib > output/analysis/disassembly.asm
 
-      - name: 6. رفع كافة المخرجات المستخرجة
+      - name: 5. رفع النتائج كـ Artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: hsrider-decompiled-files
+          name: hsrider-analysis-results
           path: output/
