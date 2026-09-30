@@ -20,13 +20,20 @@ jobs:
       - name: Setup Theos Environment
         uses: Randomblock1/theos-action@v1
 
-      # 3. تجميع وبناء الحزمة مع إظهار تفاصيل الترجمة (Verbose)
+      # 3. تجميع وبناء الحزمة
       - name: Compile & Package Tweak
         run: |
           make clean
           make package FINALPACKAGE=1 messages=yes
 
-      # 4. رفع حزمة التثبيت (.deb)
+      # 4. نسخ ملف الـ dylib إلى مجلد مستقل ومرئي
+      - name: Extract Dylib to Output Directory
+        if: always()
+        run: |
+          mkdir -p dylib_output
+          find .theos -name "*.dylib" -exec cp {} dylib_output/ \;
+
+      # 5. رفع حزمة التثبيت (.deb)
       - name: Upload .deb Package
         if: always()
         uses: actions/upload-artifact@v4
@@ -34,10 +41,10 @@ jobs:
           name: CleanRider-DEB
           path: packages/*.deb
 
-      # 5. رفع ملف المكتبة المجمعة (.dylib)
+      # 6. رفع ملف المكتبة المجمعة (.dylib)
       - name: Upload .dylib File
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: CleanRider-DYLIB
-          path: .theos/obj*/**/*.dylib
+          path: dylib_output/*.dylib
