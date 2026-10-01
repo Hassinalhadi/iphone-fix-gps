@@ -1,5 +1,5 @@
 TARGET := iphone:clang:latest:14.0
-INSTALL_TARGET_PROCESSES = CleanRider Rider
+INSTALL_TARGET_PROCESSES = Rider
 
 include $(THEOS)/makefiles/common.mk
 
