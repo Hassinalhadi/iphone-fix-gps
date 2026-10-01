@@ -1,8 +1,9 @@
-Package: com.custom.cleanrider
+Package: com.gufran.cleanrider
 Name: CleanRider
-Depends: mobilesubstrate
 Version: 1.0.0
-Description: Location spoofer rebuilt
-Maintainer: Developer
-Author: Developer
+Architecture: iphoneos-arm64
+Description: Location provider tweak for Rider.
+Maintainer: Gufran-Root
+Author: Gufran-Root
 Section: Tweaks
+Depends: mobilesubstrate (>= 0.9.5000)
