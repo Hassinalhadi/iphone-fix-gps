@@ -13,7 +13,7 @@
 #define kWhatsAppPhone       @"966510316786"
 #define kTelegramUsername    @"Gufran3729"
 
-// MARK: - Helper Functions
+// MARK: - Core Helper Functions
 static BOOL isFakeGPSEnabled() {
     return [[NSUserDefaults standardUserDefaults] boolForKey:kFakeGPSEnabledKey];
 }
@@ -40,6 +40,7 @@ static CLLocation *createSpoofedLocation() {
                                         timestamp:[NSDate date]];
 }
 
+// MARK: - UI Helpers
 static UIWindow *getKeyWindow() {
     UIWindow *keyWindow = nil;
     if (@available(iOS 13.0, *)) {
@@ -77,7 +78,7 @@ static UIViewController *getTopViewController() {
     return topVC;
 }
 
-// MARK: - Custom Prominent Pin (دبوس كبير وواضح ومميز)
+// MARK: - Custom Prominent Pin (الدبوس البارز المخصص)
 
 @interface GufranCustomPinView : MKAnnotationView
 @end
@@ -88,12 +89,11 @@ static UIViewController *getTopViewController() {
     self = [super initWithAnnotation:annotation reuseIdentifier:reuseIdentifier];
     if (self) {
         self.frame = CGRectMake(0, 0, 48, 56);
-        self.centerOffset = CGPointMake(0, -26); // يضمن أن رأس السهم يرتكز على الإحداثي الفعلي
+        self.centerOffset = CGPointMake(0, -26);
         self.draggable = YES;
         self.canShowCallout = YES;
         self.backgroundColor = [UIColor clearColor];
 
-        // 1. سهم المؤشر السفلي
         CAShapeLayer *pointer = [CAShapeLayer layer];
         UIBezierPath *path = [UIBezierPath bezierPath];
         [path moveToPoint:CGPointMake(18, 38)];
@@ -104,7 +104,6 @@ static UIViewController *getTopViewController() {
         pointer.fillColor = [UIColor colorWithRed:0.95 green:0.12 blue:0.20 alpha:1.0].CGColor;
         [self.layer addSublayer:pointer];
 
-        // 2. الرأس الدائري البارز مع الإطار الأبيض والظل
         UIView *pinBody = [[UIView alloc] initWithFrame:CGRectMake(4, 2, 40, 40)];
         pinBody.backgroundColor = [UIColor colorWithRed:0.95 green:0.12 blue:0.20 alpha:1.0];
         pinBody.layer.cornerRadius = 20;
@@ -115,7 +114,6 @@ static UIViewController *getTopViewController() {
         pinBody.layer.shadowOffset = CGSizeMake(0, 3);
         pinBody.layer.shadowRadius = 4.5;
 
-        // 3. أيقونة الدبوس الداخلية
         UILabel *iconLabel = [[UILabel alloc] initWithFrame:pinBody.bounds];
         iconLabel.text = @"📍";
         iconLabel.font = [UIFont systemFontOfSize:22];
@@ -128,7 +126,7 @@ static UIViewController *getTopViewController() {
 
 @end
 
-// MARK: - Map View Controller
+// MARK: - Map View Controller (Google Maps & Styles)
 
 @interface GufranMapViewController : UIViewController <MKMapViewDelegate>
 @property (nonatomic, strong) MKMapView *mapView;
@@ -236,7 +234,7 @@ static UIViewController *getTopViewController() {
     }
 
     switch (index) {
-        case 0: { // Google Maps
+        case 0: {
             self.mapView.mapType = MKMapTypeStandard;
             NSString *googleUrl = @"https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}";
             self.googleTileOverlay = [[MKTileOverlay alloc] initWithURLTemplate:googleUrl];
@@ -278,7 +276,6 @@ static UIViewController *getTopViewController() {
     self.coordLabel.text = [NSString stringWithFormat:@"Lat: %.5f | Lon: %.5f", coord.latitude, coord.longitude];
 }
 
-// استخدام الدبوس الجديد البارز
 - (MKAnnotationView *)mapView:(MKMapView *)mapView viewForAnnotation:(id<MKAnnotation>)annotation {
     if ([annotation isKindOfClass:[MKPointAnnotation class]]) {
         static NSString *customPinID = @"GufranCustomPin";
@@ -543,7 +540,7 @@ static UIViewController *getTopViewController() {
 
 @end
 
-// MARK: - Floating Button (Gufran-Root Icon)
+// MARK: - Floating Button
 
 @interface GufranFloatingButton : UIButton
 @end
@@ -591,52 +588,76 @@ static UIViewController *getTopViewController() {
 
 @end
 
-// MARK: - CoreLocation Hooks & Delegate Callback
+// MARK: - ==========================================
+// MARK: - CoreLocation Hooks (مطابقة الأداة الأصلية)
+// MARK: - ==========================================
 
-static NSMutableSet *swizzledDelegateClasses;
+// 1. مؤقت التدفق المستمر (Streaming Location Timer) لمنع قطع الاتصال
+static NSTimer *periodicLocationTimer = nil;
+static __weak CLLocationManager *currentActiveManager = nil;
 
-static void hookDelegateClass(Class delClass) {
-    if (!delClass) return;
-
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        swizzledDelegateClasses = [[NSMutableSet alloc] init];
-    });
-
-    NSString *className = NSStringFromClass(delClass);
-    @synchronized (swizzledDelegateClasses) {
-        if ([swizzledDelegateClasses containsObject:className]) return;
-        [swizzledDelegateClasses addObject:className];
+static void startPeriodicStreaming(CLLocationManager *manager) {
+    currentActiveManager = manager;
+    if (periodicLocationTimer) {
+        [periodicLocationTimer invalidate];
+        periodicLocationTimer = nil;
     }
+    periodicLocationTimer = [NSTimer scheduledTimerWithTimeInterval:2.0 repeats:YES block:^(NSTimer * _Nonnull timer) {
+        if (!isFakeGPSEnabled() || !currentActiveManager) return;
+        id<CLLocationManagerDelegate> delegate = currentActiveManager.delegate;
+        if (!delegate) return;
 
-    SEL newLocSel = @selector(locationManager:didUpdateLocations:);
-    Method newLocMethod = class_getInstanceMethod(delClass, newLocSel);
-    if (newLocMethod) {
-        IMP originalImp = method_getImplementation(newLocMethod);
-        IMP swizzledImp = imp_implementationWithBlock(^(id self_obj, CLLocationManager *manager, NSArray<CLLocation *> *locations) {
-            CLLocation *spoofed = createSpoofedLocation();
-            NSArray<CLLocation *> *passedLocations = locations;
-            if (spoofed) {
-                passedLocations = @[spoofed];
-            }
-            ((void(*)(id, SEL, CLLocationManager *, NSArray<CLLocation *> *))originalImp)(self_obj, newLocSel, manager, passedLocations);
-        });
-        class_replaceMethod(delClass, newLocSel, swizzledImp, method_getTypeEncoding(newLocMethod));
-    }
-
-    SEL oldLocSel = @selector(locationManager:didUpdateToLocation:fromLocation:);
-    Method oldLocMethod = class_getInstanceMethod(delClass, oldLocSel);
-    if (oldLocMethod) {
-        IMP originalOldImp = method_getImplementation(oldLocMethod);
-        IMP swizzledOldImp = imp_implementationWithBlock(^(id self_obj, CLLocationManager *manager, CLLocation *newLocation, CLLocation *oldLocation) {
-            CLLocation *spoofed = createSpoofedLocation();
-            CLLocation *finalLoc = spoofed ? spoofed : newLocation;
-            ((void(*)(id, SEL, CLLocationManager *, CLLocation *, CLLocation *))originalOldImp)(self_obj, oldLocSel, manager, finalLoc, oldLocation);
-        });
-        class_replaceMethod(delClass, oldLocSel, swizzledOldImp, method_getTypeEncoding(oldLocMethod));
-    }
+        CLLocation *spoofed = createSpoofedLocation();
+        if ([delegate respondsToSelector:@selector(locationManager:didUpdateLocations:)]) {
+            [delegate locationManager:currentActiveManager didUpdateLocations:@[spoofed]];
+        } else if ([delegate respondsToSelector:@selector(locationManager:didUpdateToLocation:fromLocation:)]) {
+            [delegate locationManager:currentActiveManager didUpdateToLocation:spoofed fromLocation:spoofed];
+        }
+    }];
 }
 
+// 2. اعتراض كلاس CLLocation نفسه (الخطوة الجوهرية التي تعتمد عليها hsrider)
+%hook CLLocation
+
+- (CLLocationCoordinate2D)coordinate {
+    if (isFakeGPSEnabled()) {
+        return getSavedCoordinate();
+    }
+    return %orig;
+}
+
+- (CLLocationAccuracy)horizontalAccuracy {
+    if (isFakeGPSEnabled()) {
+        return 5.0;
+    }
+    return %orig;
+}
+
+- (CLLocationAccuracy)verticalAccuracy {
+    if (isFakeGPSEnabled()) {
+        return 5.0;
+    }
+    return %orig;
+}
+
+- (CLLocationDistance)altitude {
+    if (isFakeGPSEnabled()) {
+        return 15.0;
+    }
+    return %orig;
+}
+
+// إخفاء فحص التزييف المكتبي (iOS 15+)
+- (id)sourceInformation {
+    if (isFakeGPSEnabled()) {
+        return nil; // يلغي علامة isSimulatedBySoftware
+    }
+    return %orig;
+}
+
+%end
+
+// 3. اعتراض CLLocationManager
 %hook CLLocationManager
 
 - (CLLocation *)location {
@@ -647,16 +668,35 @@ static void hookDelegateClass(Class delClass) {
     return %orig;
 }
 
-- (void)setDelegate:(id<CLLocationManagerDelegate>)delegate {
-    if (delegate) {
-        hookDelegateClass([delegate class]);
+- (void)startUpdatingLocation {
+    %orig;
+    if (isFakeGPSEnabled()) {
+        startPeriodicStreaming(self);
     }
-    %orig(delegate);
+}
+
+- (void)requestLocation {
+    if (isFakeGPSEnabled() && self.delegate) {
+        CLLocation *spoofed = createSpoofedLocation();
+        if ([self.delegate respondsToSelector:@selector(locationManager:didUpdateLocations:)]) {
+            [self.delegate locationManager:self didUpdateLocations:@[spoofed]];
+            return;
+        }
+    }
+    %orig;
+}
+
+- (void)stopUpdatingLocation {
+    %orig;
+    if (periodicLocationTimer) {
+        [periodicLocationTimer invalidate];
+        periodicLocationTimer = nil;
+    }
 }
 
 %end
 
-// MARK: - UIWindow Hook for Floating Button
+// MARK: - UIWindow Hook
 
 %hook UIWindow
 
